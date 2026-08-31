@@ -89,14 +89,103 @@ func TestSearchPassesCollectionAndLimit(t *testing.T) {
 	}
 }
 
+// TestSearchSkipsMissingFile: индекс отстал от диска для ОДНОГО файла из
+// нескольких — остальные попадания читаются нормально, отстающий файл
+// молча пропускается, ошибки нет. Полный отказ чтения (все файлы недоступны)
+// — отдельный случай, см. TestSearchAllHitsUnreadableIsError: там это уже
+// не тихий пропуск, а ошибка.
 func TestSearchSkipsMissingFile(t *testing.T) {
-	s := &Searcher{Collection: "aristotle", Root: t.TempDir(),
-		Run: fakeQmd(`[{"file":"qmd://aristotle/нет/такого.md","score":0.9}]`)}
+	root := t.TempDir()
+	writeChapter(t, root, "ne/i/01.md", "genuine", "ethics", "NE I.1")
+
+	s := &Searcher{Collection: "aristotle", Root: root, Run: fakeQmd(`[
+	  {"file":"qmd://aristotle/ne/i/01.md","score":0.9},
+	  {"file":"qmd://aristotle/нет/такого.md","score":0.8}
+	]`)}
 	hits, err := s.Search(context.Background(), "x", "", 5)
 	if err != nil {
-		t.Fatalf("пропавший файл не должен ронять поиск: %v", err)
+		t.Fatalf("пропавший файл не должен ронять поиск, если другие прочлись: %v", err)
+	}
+	if len(hits) != 1 || hits[0].Chapter.Cite != "NE I.1" {
+		t.Fatalf("получено %+v", hits)
+	}
+}
+
+// TestSearchAllHitsUnreadableIsError: qmd вернул попадания, но ни одно не
+// прочиталось — это почти наверняка неверный корень корпуса, а не честная
+// пустая выдача. Пользователь не должен получить агента, который тихо
+// отвечает "в моих сочинениях об этом ничего нет" из-за опечатки в пути.
+func TestSearchAllHitsUnreadableIsError(t *testing.T) {
+	root := t.TempDir()
+	s := &Searcher{Collection: "aristotle", Root: root, Run: fakeQmd(`[
+	  {"file":"qmd://aristotle/нет/такого.md","score":0.9},
+	  {"file":"qmd://aristotle/тоже/нет.md","score":0.8}
+	]`)}
+	hits, err := s.Search(context.Background(), "x", "", 5)
+	if err == nil {
+		t.Fatalf("ожидалась ошибка при полном отказе чтения, получено %d попаданий", len(hits))
+	}
+	if !strings.Contains(err.Error(), root) {
+		t.Errorf("ошибка не называет корень корпуса %q: %v", root, err)
+	}
+}
+
+// TestSearchGenuinelyEmptyIsNotError: qmd вернул ноль попаданий — это честная
+// пустота, а не сбой чтения, ошибки быть не должно.
+func TestSearchGenuinelyEmptyIsNotError(t *testing.T) {
+	s := &Searcher{Collection: "aristotle", Root: t.TempDir(), Run: fakeQmd(`[]`)}
+	hits, err := s.Search(context.Background(), "x", "", 5)
+	if err != nil {
+		t.Fatalf("нулевая выдача qmd — не ошибка: %v", err)
 	}
 	if len(hits) != 0 {
 		t.Fatalf("получено %d попаданий", len(hits))
+	}
+}
+
+// TestSearchRejectsPathTraversal: выдача qmd пытается увести чтение за
+// пределы корня корпуса через "..". Такое попадание пропускается, даже если
+// по этому пути реально лежит файл.
+func TestSearchRejectsPathTraversal(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "corpus")
+	writeChapter(t, root, "ne/i/01.md", "genuine", "ethics", "NE I.1")
+
+	secretBody := "---\nwork: \"S\"\nwork_slug: s\nbook: null\nchapter: 1\n" +
+		"group: ethics\nauthenticity: genuine\ntranslator: null\nsource: mit\n" +
+		"cite: \"Secret\"\n---\n\nсекрет за пределами корпуса\n"
+	if err := os.WriteFile(filepath.Join(parent, "secret.md"), []byte(secretBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Searcher{Collection: "aristotle", Root: root, Run: fakeQmd(`[
+	  {"file":"qmd://aristotle/ne/i/01.md","score":0.9},
+	  {"file":"qmd://aristotle/../secret.md","score":0.8}
+	]`)}
+	hits, err := s.Search(context.Background(), "x", "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Chapter.Cite != "NE I.1" {
+		t.Fatalf("попадание за пределами корпуса не должно было пройти: %+v", hits)
+	}
+}
+
+// TestSearchDefaultsKWhenNonPositive: k <= 0 должно превращаться в 6, а не
+// проходить в qmd как есть. До этого теста ветка по умолчанию не
+// исполнялась ни разу — все прочие тесты передают положительное k.
+func TestSearchDefaultsKWhenNonPositive(t *testing.T) {
+	var got []string
+	s := &Searcher{Collection: "aristotle", Root: t.TempDir(),
+		Run: func(_ context.Context, args ...string) ([]byte, error) {
+			got = args
+			return []byte("[]"), nil
+		}}
+	if _, err := s.Search(context.Background(), "happiness", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "-n 6") {
+		t.Errorf("k <= 0 не подставило значение по умолчанию 6: %v", got)
 	}
 }

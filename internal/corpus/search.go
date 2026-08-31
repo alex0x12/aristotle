@@ -58,12 +58,22 @@ func (s *Searcher) Search(ctx context.Context, query, group string, k int) ([]Hi
 
 	prefix := "qmd://" + s.Collection + "/"
 	hits := make([]Hit, 0, len(results))
+	read := 0
 	for _, r := range results {
 		rel := strings.TrimPrefix(r.File, prefix)
-		data, err := os.ReadFile(filepath.Join(s.Root, rel))
+
+		joined := filepath.Join(s.Root, rel)
+		safe, err := filepath.Rel(s.Root, joined)
+		if err != nil || safe == ".." || strings.HasPrefix(safe, ".."+string(filepath.Separator)) {
+			continue // выдача qmd пытается увести чтение за пределы корня корпуса
+		}
+
+		data, err := os.ReadFile(joined)
 		if err != nil {
 			continue // индекс отстал от диска — не роняем беседу
 		}
+		read++
+
 		ch, err := ParseChapter(rel, data)
 		if err != nil {
 			continue
@@ -75,6 +85,15 @@ func (s *Searcher) Search(ctx context.Context, query, group string, k int) ([]Hi
 			continue
 		}
 		hits = append(hits, Hit{Chapter: ch, Score: r.Score})
+	}
+	// qmd нашёл попадания, но ни одно не прочиталось с диска — почти
+	// наверняка неверно указан корень корпуса, а не честная пустая выдача.
+	// Пропуск отдельных нечитаемых файлов при том, что другие прочлись,
+	// остаётся молчаливым: индекс мог просто отстать от диска.
+	if len(results) > 0 && read == 0 {
+		return nil, fmt.Errorf(
+			"qmd вернул %d попаданий, но ни одна глава не прочиталась с диска; "+
+				"похоже, неверный корень корпуса: %s", len(results), s.Root)
 	}
 	return hits, nil
 }

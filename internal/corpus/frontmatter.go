@@ -100,8 +100,25 @@ func ParseChapter(path string, data []byte) (Chapter, error) {
 		return Chapter{}, fmt.Errorf("%s: %w", path, err)
 	}
 	c.Text = strings.TrimSpace(body.String())
-	if c.Cite == "" {
-		return Chapter{}, fmt.Errorf("%s: пустое поле cite", path)
+
+	// book и translator законно бывают null (работа без книг, переводчик не
+	// указан в шапке) — обязательными не считаются. Остальные поля обязаны
+	// быть заполнены, иначе, например, глава без authenticity молча пройдёт
+	// фильтр spurious как подлинная.
+	for _, req := range []struct{ name, value string }{
+		{"work", c.Work},
+		{"work_slug", c.WorkSlug},
+		{"group", c.Group},
+		{"authenticity", c.Authenticity},
+		{"source", c.Source},
+		{"cite", c.Cite},
+	} {
+		if req.value == "" {
+			return Chapter{}, fmt.Errorf("%s: отсутствует обязательное поле %s", path, req.name)
+		}
+	}
+	if c.Number <= 0 {
+		return Chapter{}, fmt.Errorf("%s: отсутствует обязательное поле chapter", path)
 	}
 	return c, nil
 }

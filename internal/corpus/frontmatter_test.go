@@ -1,6 +1,9 @@
 package corpus
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const chapterFile = `---
 work: "Nicomachean Ethics"
@@ -67,5 +70,130 @@ func TestParseChapterNullBook(t *testing.T) {
 func TestParseChapterRejectsMissingFrontmatter(t *testing.T) {
 	if _, err := ParseChapter("x.md", []byte("просто текст")); err == nil {
 		t.Fatal("ожидалась ошибка при отсутствии frontmatter")
+	}
+}
+
+const unclosedChapter = `---
+work: "W"
+work_slug: w
+chapter: 1
+group: g
+authenticity: genuine
+source: mit
+cite: "C"
+
+тело без закрывающего разделителя
+`
+
+func TestParseChapterUnclosedFrontmatterFails(t *testing.T) {
+	if _, err := ParseChapter("x.md", []byte(unclosedChapter)); err == nil {
+		t.Fatal("ожидалась ошибка при незакрытом frontmatter")
+	}
+}
+
+const zeroChapterNumber = `---
+work: "W"
+work_slug: w
+chapter: 0
+group: g
+authenticity: genuine
+source: mit
+cite: "C"
+---
+
+тело
+`
+
+func TestParseChapterZeroChapterNumberFails(t *testing.T) {
+	if _, err := ParseChapter("x.md", []byte(zeroChapterNumber)); err == nil {
+		t.Fatal("ожидалась ошибка при chapter <= 0")
+	}
+}
+
+// TestParseChapterMissingRequiredField проверяет каждое обязательное поле по
+// отдельности: без него ParseChapter обязана вернуть ошибку, называющую и
+// файл, и само поле. book и translator сюда не входят — они законно бывают
+// null.
+func TestParseChapterMissingRequiredField(t *testing.T) {
+	lines := map[string]string{
+		"work":         `work: "W"`,
+		"work_slug":    "work_slug: w",
+		"chapter":      "chapter: 1",
+		"group":        "group: g",
+		"authenticity": "authenticity: genuine",
+		"source":       "source: mit",
+		"cite":         `cite: "C"`,
+	}
+	order := []string{"work", "work_slug", "chapter", "group", "authenticity", "source", "cite"}
+
+	for _, missing := range order {
+		t.Run(missing, func(t *testing.T) {
+			var kept []string
+			for _, k := range order {
+				if k != missing {
+					kept = append(kept, lines[k])
+				}
+			}
+			src := "---\n" + strings.Join(kept, "\n") + "\n---\n\nтело\n"
+
+			_, err := ParseChapter("x.md", []byte(src))
+			if err == nil {
+				t.Fatalf("ожидалась ошибка при отсутствии поля %s", missing)
+			}
+			if !strings.Contains(err.Error(), missing) {
+				t.Errorf("ошибка не называет недостающее поле %q: %v", missing, err)
+			}
+			if !strings.Contains(err.Error(), "x.md") {
+				t.Errorf("ошибка не называет файл: %v", err)
+			}
+		})
+	}
+}
+
+const colonInValueChapter = `---
+work: "W"
+work_slug: w
+chapter: 1
+group: g
+authenticity: genuine
+source: mit
+cite: "Nicomachean Ethics I.7: о благе"
+---
+
+тело
+`
+
+func TestParseChapterColonInsideValue(t *testing.T) {
+	c, err := ParseChapter("x.md", []byte(colonInValueChapter))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Nicomachean Ethics I.7: о благе"
+	if c.Cite != want {
+		t.Errorf("Cite = %q, хотели %q", c.Cite, want)
+	}
+}
+
+const escapedQuoteChapter = `---
+work: "W"
+work_slug: w
+chapter: 1
+group: g
+authenticity: genuine
+source: mit
+cite: "Book \"Special\" I.7"
+---
+
+тело
+`
+
+func TestParseChapterEscapedQuoteInValue(t *testing.T) {
+	c, err := ParseChapter("x.md", []byte(escapedQuoteChapter))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `Book "Special" I.7`
+	if c.Cite != want {
+		t.Errorf("Cite = %q, хотели %q", c.Cite, want)
 	}
 }
