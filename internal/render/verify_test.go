@@ -1,7 +1,27 @@
 // internal/render/verify_test.go
 package render
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// loadCorpusChapter читает главу корпуса и снимает YAML-frontmatter между
+// строками "---", возвращая только текст главы.
+func loadCorpusChapter(t *testing.T, relPath string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "corpus", relPath))
+	if err != nil {
+		t.Fatalf("не удалось прочитать главу корпуса %s: %v", relPath, err)
+	}
+	parts := strings.SplitN(string(raw), "---", 3)
+	if len(parts) != 3 {
+		t.Fatalf("не удалось снять frontmatter главы %s", relPath)
+	}
+	return parts[2]
+}
 
 const passage = "But the good of man turns out to be an activity of soul " +
 	"in accordance with virtue, and if there are more than one virtue, " +
@@ -151,5 +171,53 @@ func TestRejectsInjectedWord(t *testing.T) {
 	q := "the good of man turns out to be an activity of soul unicorns"
 	if Verify(q, []string{passage}) {
 		t.Fatal("цитата с подмешанным выдуманным словом не должна проходить")
+	}
+}
+
+// Раунд 3: пересказ, а не цитата. "By" из "by nature" встречается в главе
+// далеко от "man is ... a political animal" ("is by nature the superior и
+// governor" в начале главы), и жадный поиск подпоследовательности растягивает
+// совпадение почти на всю главу. Настоящий текст главы — "man is naturally a
+// political animal", без "by nature". Без ограничения на разброс это
+// засчитывалось как подтверждённая цитата.
+func TestRejectsParaphraseSpreadAcrossChapterPolitics(t *testing.T) {
+	chapter := loadCorpusChapter(t, "politics/i/02.md")
+	q := "man is by nature a political animal"
+	if Verify(q, []string{chapter}) {
+		t.Fatal("пересказ, размазанный по главе, не должен проходить как цитата")
+	}
+}
+
+// Раунд 3: тот же пробой на главе «О душе» II.1. Настоящий текст —
+// "the first grade of actuality of a natural body", а не "soul first
+// actuality of a natural body"; слово "soul" встречается многократно по всей
+// главе, и жадный поиск подхватывает первое попавшееся.
+func TestRejectsParaphraseSpreadAcrossChapterSoul(t *testing.T) {
+	chapter := loadCorpusChapter(t, "on-the-soul/ii/01.md")
+	q := "soul first actuality of a natural body"
+	if Verify(q, []string{chapter}) {
+		t.Fatal("пересказ, размазанный по главе, не должен проходить как цитата")
+	}
+}
+
+// Раунд 3: тот же пробой на «Никомаховой этике» I.7. Слова "happiness",
+// "function of man" и "activity of soul" реально есть в главе, но в разных
+// предложениях далеко друг от друга — это пересказ, собранный из частых слов
+// главы, а не цитата.
+func TestRejectsParaphraseSpreadAcrossChapterEthics(t *testing.T) {
+	chapter := loadCorpusChapter(t, "nicomachean-ethics/i/07.md")
+	q := "happiness function of man activity of soul"
+	if Verify(q, []string{chapter}) {
+		t.Fatal("пересказ, размазанный по главе, не должен проходить как цитата")
+	}
+}
+
+// Законный случай: дословная выдержка из настоящей главы «Никомаховой этики»
+// I.7 должна проходить — узкое совпадение, а не разброс пересказа.
+func TestAcceptsVerbatimQuoteFromRealChapter(t *testing.T) {
+	chapter := loadCorpusChapter(t, "nicomachean-ethics/i/07.md")
+	q := "human good turns out to be activity of soul in accordance with virtue"
+	if !Verify(q, []string{chapter}) {
+		t.Fatal("дословная выдержка из настоящей главы должна проходить")
 	}
 }

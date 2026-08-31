@@ -72,8 +72,19 @@ func Verify(quote string, chapters []string) bool {
 		quoteIdx := 0
 		chapterIdx := 0
 
+		// firstHit/lastHit — позиции первого и последнего засчитанного слова
+		// в главе. По ним меряем разброс совпадения: подлинная выдержка
+		// укладывается в узкое окно, а случайный набор частых слов
+		// размазывается по всей главе.
+		firstHit := -1
+		lastHit := -1
+
 		for chapterIdx < len(chapterWords) && quoteIdx < len(quoteWords) {
 			if chapterWords[chapterIdx] == quoteWords[quoteIdx] {
+				if firstHit == -1 {
+					firstHit = chapterIdx
+				}
+				lastHit = chapterIdx
 				quoteIdx++
 			}
 			chapterIdx++
@@ -81,7 +92,10 @@ func Verify(quote string, chapters []string) bool {
 
 		hit := quoteIdx
 		if float64(hit)/float64(len(quoteWords)) >= Threshold {
-			return true
+			spread := lastHit - firstHit + 1
+			if spread <= 3*len(quoteWords)+10 {
+				return true
+			}
 		}
 	}
 	return false
