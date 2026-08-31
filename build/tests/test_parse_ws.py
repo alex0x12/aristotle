@@ -109,6 +109,26 @@ Seventh chapter of book two.
 Eighth chapter of book two.
 """
 
+# «О снах»: маркеры глав — строки "Part N" обычным текстом, без разметки ==
+# == вовсе (проверено на живых данных, .cache/180ff90f0f7dc740.txt).
+PLAIN_PART_PAGE = """{{header
+ | translator = John Isaac Beare
+}}
+
+
+Part 1
+{{dhr}}
+We must, in the next place, investigate the subject of the dream.
+
+Part 2
+{{dhr}}
+We can best obtain a scientific view of the nature of the dream.
+
+Part 3
+{{dhr}}
+From this it is manifest that the stimulatory movements based upon sensory impressions.
+"""
+
 # Ничья: одна книга (уровень 2) и одна глава (уровень 3) на странице.
 TIE_PAGE = """{{header
  | translator = William Ellis
@@ -204,6 +224,34 @@ def test_bare_numbers_are_chapters_when_no_headings_at_all():
     assert all(c.book == "II" for c in chapters)
     assert chapters[0].text.startswith("THAT the male and the female")
     assert chapters[-1].text == "Eighth chapter of book two."
+
+
+def test_plain_text_part_markers_are_chapters():
+    # Находка ревью: "О снах" не размечен ни заголовками ==, ни голыми
+    # числами — только строками "Part N" обычным текстом. Без этого пути
+    # разбор сваливался в запасной вариант "вся страница — одна глава", и
+    # строки-маркеры оставались в теле текста.
+    translator, chapters = parse_page(PLAIN_PART_PAGE, None)
+    assert translator == "John Isaac Beare"
+    assert [c.number for c in chapters] == [1, 2, 3]
+    assert chapters[0].text.startswith("We must, in the next place")
+    assert chapters[1].text.startswith("We can best obtain")
+    assert chapters[2].text.startswith("From this it is manifest")
+    joined = "\n".join(c.text for c in chapters)
+    assert "Part 1" not in joined
+    assert "Part 2" not in joined
+    assert "Part 3" not in joined
+
+
+def test_plain_text_part_markers_require_sequential_numbers():
+    # Одна случайная строка прозы вида "Part 5 ..." без предшествующих
+    # "Part 1".."Part 4" не должна открывать главу.
+    raw = ("{{header | translator = X }}\n\n"
+           "Some introductory text mentioning Part 5 of a different work.\n\n"
+           "More text.\n")
+    _, chapters = parse_page(raw, None)
+    assert len(chapters) == 1
+    assert "Part 5" in chapters[0].text
 
 
 def test_chapter_level_tie_prefers_deeper_level():

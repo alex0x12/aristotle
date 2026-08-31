@@ -13,6 +13,11 @@ TRANSLATOR_RE = re.compile(r"^\s*\|\s*translator\s*=\s*(.+?)\s*$", re.M)
 HEADING_RE = re.compile(r"^(=+)\s*(.+?)\s*=+\s*$")
 NUMBER_RE = re.compile(r"(\d+|[IVXLC]+)\s*$")
 BARE_NUMBER_RE = re.compile(r"^\s*(\d+)\s*$")
+# «О снах»: строки-маркеры вида "Part 1", "Part 2" стоят обычным текстом,
+# без разметки == == — Wikisource иногда воспроизводит то же соглашение об
+# именовании частей, что и Internet Classics Archive (см. PART_RE в
+# parse_mit.py), но без оборачивающих знаков заголовка.
+PART_LINE_RE = re.compile(r"^\s*Part\s+(\d+|[IVXLC]+)\s*$")
 BOOK_SUB_RE = re.compile(r"/Book\s+(\d+|[IVXLC]+)\s*$", re.I)
 
 # Служебные разделы аппарата, на которых разбор обрывается: заголовок этого
@@ -182,6 +187,34 @@ def _bare_number_chapters(lines: list[str],
     return chapters
 
 
+def _part_line_chapters(lines: list[str], book: str | None) -> list[Chapter]:
+    """Главы по строкам-маркерам "Part N" обычным текстом, без разметки
+    заголовка — как в "On Dreams" на Wikisource. Тот же приём
+    последовательности, что и в _bare_number_chapters: номер принимается,
+    только если он на единицу больше предыдущего, иначе случайное
+    предложение, начинающееся со слова "Part", открыло бы главу."""
+    chapters: list[Chapter] = []
+    number: int | None = None
+    buf: list[str] = []
+    last = 0
+
+    def flush() -> None:
+        if number is not None:
+            chapters.append(Chapter(book=book, number=number, text=_reflow(buf)))
+
+    for line in lines:
+        match = PART_LINE_RE.match(line)
+        if match and _to_int(match.group(1)) == last + 1:
+            flush()
+            number = last = _to_int(match.group(1))
+            buf = []
+            continue
+        if number is not None:
+            buf.append(line)
+    flush()
+    return chapters
+
+
 def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
     match = TRANSLATOR_RE.search(raw)
     translator = match.group(1) if match else None
@@ -190,12 +223,15 @@ def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
     lines = raw.splitlines()
 
     # Порядок распознавания границ главы: сначала заголовки нужного уровня;
-    # если заголовков нет вовсе — голые числа на отдельной строке; и только
-    # если нет ни того ни другого — вся страница одной главой.
+    # если заголовков нет вовсе — голые числа на отдельной строке; если и
+    # их нет — строки-маркеры "Part N" обычным текстом; и только если нет
+    # ничего из этого — вся страница одной главой.
     if level is not None:
         chapters = _heading_chapters(lines, level, book)
     else:
         chapters = _bare_number_chapters(lines, book)
+        if not chapters:
+            chapters = _part_line_chapters(lines, book)
 
     if not chapters:
         body = _reflow(lines)

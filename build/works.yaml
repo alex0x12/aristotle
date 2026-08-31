@@ -4,12 +4,14 @@ athenian-constitution:
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/athenian_const.mb.txt
+  year: 1921
 categories:
   title: Categories
   group: logic
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/categories.mb.txt
+  year: 1928
 on-dreams:
   title: On Dreams
   group: psychology
@@ -17,6 +19,7 @@ on-dreams:
   source: wikisource
   url: https://en.wikisource.org/wiki/On_Dreams_(Aristotle)
   translator: John Isaac Beare
+  year: 1908
 gait-of-animals:
   title: On the Gait of Animals
   group: biology
@@ -24,30 +27,35 @@ gait-of-animals:
   source: wikisource
   url: https://en.wikisource.org/wiki/On_the_Progression_of_Animals
   translator: A. S. L. Farquharson
+  year: 1912
 generation-and-corruption:
   title: On Generation and Corruption
   group: physics
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/gener_corr.mb.txt
+  year: 1930
 on-the-heavens:
   title: On the Heavens
   group: physics
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/heavens.mb.txt
+  year: 1930
 history-of-animals:
   title: The History of Animals
   group: biology
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/history_anim.mb.txt
+  year: 1910
 on-interpretation:
   title: On Interpretation
   group: logic
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/interpretation.mb.txt
+  year: 1928
 longevity-and-shortness-of-life:
   title: On Longevity and Shortness of Life
   group: psychology
@@ -55,6 +63,7 @@ longevity-and-shortness-of-life:
   source: wikisource
   url: https://en.wikisource.org/wiki/On_Longevity_and_Shortness_of_Life
   translator: George Robert Thompson Ross
+  year: 1908
 on-memory:
   title: On Memory and Reminiscence
   group: psychology
@@ -62,18 +71,21 @@ on-memory:
   source: wikisource
   url: https://en.wikisource.org/wiki/On_Memory_and_Reminiscence
   translator: John Isaac Beare
+  year: 1908
 metaphysics:
   title: Metaphysics
   group: metaphysics
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/metaphysics.mb.txt
+  year: 1908
 meteorology:
   title: Meteorology
   group: physics
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/meteorology.mb.txt
+  year: 1923
 movement-of-animals:
   title: On the Motion of Animals
   group: biology
@@ -81,30 +93,35 @@ movement-of-animals:
   source: wikisource
   url: https://en.wikisource.org/wiki/On_the_Movement_of_Animals
   translator: A. S. L. Farquharson
+  year: 1912
 nicomachean-ethics:
   title: Nicomachean Ethics
   group: ethics
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/nicomachaen.mb.txt
+  year: 1925
 parts-of-animals:
   title: On the Parts of Animals
   group: biology
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/parts_animals.mb.txt
+  year: 1911
 physics:
   title: Physics
   group: physics
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/physics.mb.txt
+  year: 1930
 poetics:
   title: Poetics
   group: rhetoric-poetics
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/poetics.mb.txt
+  year: 1895
 politics:
   title: Politics
   group: politics
@@ -112,18 +129,21 @@ politics:
   source: wikisource
   url: https://en.wikisource.org/wiki/Politics_(Ellis)
   translator: William Ellis
+  year: 1776
 posterior-analytics:
   title: Posterior Analytics
   group: logic
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/posterior.mb.txt
+  year: 1928
 prior-analytics:
   title: Prior Analytics
   group: logic
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/prior.mb.txt
+  year: 1928
 on-prophesying-by-dreams:
   title: On Prophesying by Dreams
   group: psychology
@@ -131,18 +151,21 @@ on-prophesying-by-dreams:
   source: wikisource
   url: https://en.wikisource.org/wiki/On_Prophesying_by_Dreams
   translator: John Isaac Beare
+  year: 1908
 rhetoric:
   title: Rhetoric
   group: rhetoric-poetics
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/rhetoric.mb.txt
+  year: 1924
 on-sense-and-the-sensible:
   title: On Sense and the Sensible
   group: psychology
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/sense.mb.txt
+  year: 1908
 on-sleep:
   title: On Sleep and Sleeplessness
   group: psychology
@@ -150,30 +173,35 @@ on-sleep:
   source: wikisource
   url: https://en.wikisource.org/wiki/On_Sleep_and_Sleeplessness
   translator: John Isaac Beare
+  year: 1908
 sophistical-refutations:
   title: On Sophistical Refutations
   group: logic
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/sophist_refut.mb.txt
+  year: 1928
 on-the-soul:
   title: On the Soul
   group: psychology
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/soul.mb.txt
+  year: 1931
 topics:
   title: Topics
   group: logic
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/topics.mb.txt
+  year: 1928
 on-youth-and-old-age:
   title: On Youth and Old Age, On Life and Death, On Breathing
   group: psychology
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/youth_old.mb.txt
+  year: 1908
 generation-of-animals:
   title: On the Generation of Animals
   group: biology
@@ -181,3 +209,4 @@ generation-of-animals:
   source: wikisource
   url: https://en.wikisource.org/wiki/On_the_Generation_of_Animals
   translator: Arthur Platt
+  year: 1910

@@ -24,6 +24,13 @@ class Work:
     source: str
     url: str
     translator: str | None = None
+    # Год первой публикации именно этого перевода (не год написания
+    # Аристотелем, не год позднейшего переиздания или включения в
+    # многотомник). Не входит в REQUIRED: старые фикстуры и тесты, где год
+    # роли не играет, не обязаны его указывать. Строка, а не число — на
+    # случай, если для работы год достоверно не устанавливается и поле
+    # несёт пояснительный текст вместо цифры (см. build/works.yaml).
+    year: str | None = None
 
 
 def load(path: Path) -> dict[str, Work]:
@@ -48,5 +55,6 @@ def load(path: Path) -> dict[str, Work]:
             source=d["source"],
             url=d["url"],
             translator=d.get("translator"),
+            year=str(d["year"]) if d.get("year") is not None else None,
         )
     return works
