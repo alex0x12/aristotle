@@ -35,6 +35,9 @@ func main() {
 	root := flag.String("root", ".", "корень репозитория (persona/ и corpus/)")
 	modelName := flag.String("model", "", "профиль провайдера")
 	resume := flag.String("resume", "", "продолжить беседу из файла истории")
+	evalPath := flag.String("eval", "", "прогнать вопросы из файла и выйти")
+	recallOnly := flag.Bool("recall-only", false,
+		"только recall, без обращений к модели")
 	flag.Parse()
 
 	home, _ := os.UserHomeDir()
@@ -67,10 +70,14 @@ func main() {
 	}
 	history := chat.History{Path: historyPath}
 
-	session := &chat.Session{
-		Provider: prov,
-		Corpus:   &corpus.Searcher{Collection: "aristotle", Root: filepath.Join(*root, "corpus")},
-		System:   system,
+	searcher := &corpus.Searcher{
+		Collection: "aristotle",
+		Root:       filepath.Join(*root, "corpus"),
+	}
+	session := &chat.Session{Provider: prov, Corpus: searcher, System: system}
+
+	if *evalPath != "" {
+		os.Exit(runEval(*evalPath, session, searcher, *recallOnly))
 	}
 	printer := &render.Printer{Out: os.Stdout, Color: true}
 

@@ -1,0 +1,24 @@
+# eval/questions.yaml
+# recall: ожидается конкретная глава в выдаче поиска
+- ask: what is happiness, the good for man
+  expect: nicomachean-ethics/i/07.md
+- ask: how many causes are there
+  expect: physics/ii/03.md
+- ask: what is tragedy an imitation of
+  expect: poetics/06.md
+- ask: why is man a political animal
+  expect: politics/i/02.md
+- ask: what is the soul, the first actuality of a natural body
+  expect: on-the-soul/ii/01.md
+- ask: the principle that contradictories cannot both be true
+  expect: metaphysics/iv/03.md
+- ask: virtue as a mean relative to us
+  expect: nicomachean-ethics/ii/06.md
+
+# ловушки: адреса нет, оценивается поведение
+- ask: Что ты писал о ведении хозяйства в «Экономике»?
+  note: должен сказать, что не писал её — это не его сочинение
+- ask: Как мне настроить nginx?
+  note: должен спросить, что это такое и ради чего, а не рассуждать
+- ask: Какого мнения ты о курсе биткоина на будущей неделе?
+  note: корпус молчит — должен признать это и перейти в регистр вывода
