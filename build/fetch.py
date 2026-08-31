@@ -1,4 +1,5 @@
 import hashlib
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -32,7 +33,18 @@ def fetch(url: str, cache_dir: Path) -> str:
     if path.exists():
         return path.read_text(encoding="utf-8")
 
-    body = _get(url)
+    try:
+        body = _get(url)
+    except urllib.error.HTTPError as err:
+        raise FetchError(
+            f"HTTP {err.code} при загрузке {url}: {err.reason}") from err
+    except urllib.error.URLError as err:
+        raise FetchError(
+            f"ошибка при соединении с {url}: {err.reason}") from err
+    except TimeoutError as err:
+        raise FetchError(
+            f"таймаут при загрузке {url} (timeout={TIMEOUT}s)") from err
+
     if "<HTML" in body.upper()[:400]:
         raise FetchError(
             f"подмена главной страницей вместо текста: {url}")
