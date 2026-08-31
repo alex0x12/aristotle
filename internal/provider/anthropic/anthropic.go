@@ -30,7 +30,7 @@ func New(p config.Profile) (provider.Provider, error) {
 	}, nil
 }
 
-func (c *client) params(req provider.Request) sdk.MessageNewParams {
+func (c *client) params(req provider.Request) (sdk.MessageNewParams, error) {
 	p := sdk.MessageNewParams{
 		Model:     sdk.Model(c.model),
 		MaxTokens: int64(req.EffectiveMaxTokens()),
@@ -45,9 +45,11 @@ func (c *client) params(req provider.Request) sdk.MessageNewParams {
 	}
 
 	for _, t := range req.Tools {
-		var required []string
-		if r, ok := t.Schema["required"].([]string); ok {
-			required = r
+		required, ok := requiredFields(t.Schema)
+		if !ok {
+			return sdk.MessageNewParams{}, fmt.Errorf(
+				"инструмент %s: поле required в схеме имеет тип %T, ожидался []string или []any из строк",
+				t.Name, t.Schema["required"])
 		}
 		p.Tools = append(p.Tools, sdk.ToolUnionParam{
 			OfTool: &sdk.ToolParam{
@@ -78,11 +80,49 @@ func (c *client) params(req provider.Request) sdk.MessageNewParams {
 			p.Messages = append(p.Messages, sdk.NewUserMessage(blocks...))
 		}
 	}
-	return p
+	return p, nil
+}
+
+// requiredFields извлекает список "required" из схемы инструмента.
+//
+// Схема принимает две равноправные формы: [] string, которую кладёт наш
+// собственный SearchCorpusTool(), и []any из строк — форму, в которую
+// encoding/json разворачивает JSON-массив, если схема когда-нибудь придёт
+// извне (из конфига или сети). Обе формы — законный ввод.
+//
+// ok=false означает не отсутствие ограничения, а то, что поле "required"
+// присутствует, но не приводится ни к одной из этих форм — то есть ошибку
+// нашего собственного кода, которая обязана быть замечена, а не проглочена
+// молча вместе с ограничением на аргументы инструмента.
+func requiredFields(schema map[string]any) (fields []string, ok bool) {
+	raw, present := schema["required"]
+	if !present {
+		return nil, true
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v, true
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, isString := item.(string)
+			if !isString {
+				return nil, false
+			}
+			out = append(out, s)
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (provider.Stream, error) {
-	raw := c.api.Messages.NewStreaming(ctx, c.params(req))
+	params, err := c.params(req)
+	if err != nil {
+		return nil, err
+	}
+	raw := c.api.Messages.NewStreaming(ctx, params)
 	return &stream{raw: raw}, nil
 }
 

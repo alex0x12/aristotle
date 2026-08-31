@@ -1,6 +1,10 @@
 package provider
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"testing"
+)
 
 func TestSearchToolSchemaIsStable(t *testing.T) {
 	// Определение инструмента входит в кэшируемый префикс (tools -> system ->
@@ -22,6 +26,22 @@ func TestSearchToolSchemaIsStable(t *testing.T) {
 	req, ok := a.Schema["required"].([]string)
 	if !ok || len(req) != 1 || req[0] != "query" {
 		t.Errorf("required = %+v, ожидался [query]", a.Schema["required"])
+	}
+
+	// Главное утверждение: проверки по паре полей выше пропустят расхождение
+	// внутри схемы (скажем, в перечне enum у group или в описании k), а
+	// именно такое расхождение и разрушит кэш промпта. Поэтому сравниваем
+	// определения целиком, побайтово, через сериализацию в JSON.
+	aJSON, err := json.Marshal(a)
+	if err != nil {
+		t.Fatalf("сериализация a: %v", err)
+	}
+	bJSON, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("сериализация b: %v", err)
+	}
+	if !bytes.Equal(aJSON, bJSON) {
+		t.Fatalf("определения инструмента различаются побайтово:\na = %s\nb = %s", aJSON, bJSON)
 	}
 }
 
