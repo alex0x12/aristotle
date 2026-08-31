@@ -19,7 +19,7 @@ type Finder interface {
 
 type Session struct {
 	Provider provider.Provider
-	Search   Finder
+	Corpus   Finder
 	System   string
 	Messages []provider.Message
 }
@@ -48,10 +48,21 @@ func argInt(input map[string]any, key string, fallback int) int {
 	return fallback
 }
 
+// exhaustedNote — пометка модели о том, что обращений к корпусу больше не
+// будет. Обязана дойти независимо от того, пуста ли последняя выдача:
+// потолок часто достигается именно потому, что предыдущие попытки не
+// устроили модель, и последний поиск на нём вполне может оказаться пустым.
+const exhaustedNote = "(поиск исчерпан: обращений к корпусу больше не будет, " +
+	"отвечай тем, что найдено, либо признай, что не нашёл)"
+
 // renderHits готовит текст результата инструмента: главы целиком со ссылками.
 func renderHits(hits []corpus.Hit, exhausted bool) (string, []string) {
 	if len(hits) == 0 {
-		return "В корпусе ничего не найдено по этому запросу.", nil
+		msg := "В корпусе ничего не найдено по этому запросу."
+		if exhausted {
+			msg += "\n\n" + exhaustedNote
+		}
+		return msg, nil
 	}
 	var b strings.Builder
 	texts := make([]string, 0, len(hits))
@@ -66,8 +77,7 @@ func renderHits(hits []corpus.Hit, exhausted bool) (string, []string) {
 		texts = append(texts, c.Text)
 	}
 	if exhausted {
-		b.WriteString("(поиск исчерпан: обращений к корпусу больше не будет, " +
-			"отвечай тем, что найдено, либо признай, что не нашёл)\n")
+		b.WriteString(exhaustedNote + "\n")
 	}
 	return strings.TrimSpace(b.String()), texts
 }
@@ -75,6 +85,11 @@ func renderHits(hits []corpus.Hit, exhausted bool) (string, []string) {
 func (s *Session) Turn(ctx context.Context, userText string,
 	onText func(string)) (TurnResult, error) {
 
+	// baseLen — длина истории до этого хода. Неудачный ход не должен
+	// оставлять следов: если провайдер откажет, история откатывается сюда,
+	// иначе следующий ход допишет вторую пользовательскую реплику подряд, а
+	// это API отвергает.
+	baseLen := len(s.Messages)
 	s.Messages = append(s.Messages,
 		provider.Message{Role: provider.RoleUser, Text: userText})
 
@@ -85,10 +100,16 @@ func (s *Session) Turn(ctx context.Context, userText string,
 		req := provider.Request{
 			System:   s.System,
 			Messages: s.Messages,
-			Tools:    []provider.ToolDef{provider.SearchCorpusTool()},
+		}
+		// Потолок обеспечивается устройством, а не только текстовой
+		// пометкой: как только он достигнут, инструмент физически не
+		// предлагается, и модель не может вызвать его снова.
+		if res.Iterations < MaxToolIterations {
+			req.Tools = []provider.ToolDef{provider.SearchCorpusTool()}
 		}
 		stream, err := s.Provider.Stream(ctx, req)
 		if err != nil {
+			s.Messages = s.Messages[:baseLen]
 			return res, err
 		}
 
@@ -109,6 +130,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 		}
 		if err := stream.Err(); err != nil {
 			stream.Close()
+			s.Messages = s.Messages[:baseLen]
 			return res, err
 		}
 		stream.Close()
@@ -129,7 +151,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 
 		results := make([]provider.ToolResult, 0, len(calls))
 		for _, call := range calls {
-			hits, err := s.Search.Search(ctx,
+			hits, err := s.Corpus.Search(ctx,
 				argString(call.Input, "query"),
 				argString(call.Input, "group"),
 				argInt(call.Input, "k", 6))
