@@ -1,0 +1,194 @@
+import json
+import pytest
+from parse_mit import ParseError
+from parse_ws import (book_subpages, chapter_level, check_usable,
+                      clean_wikitext, page_title, parse_page)
+
+APOS = "'" * 3
+
+PART_PAGE = f"""{{{{header
+ | translator = Arthur Platt
+ | section    = {APOS}Book I{APOS}
+}}}}
+
+== Part 1 ==
+
+WE have now discussed the other parts of animals.
+
+There are four causes underlying everything.
+
+== Part 2 ==
+
+Now the female is as it were a deformed male.
+"""
+
+# «Политика (Эллис)»: книга — второй уровень, глава — третий.
+NESTED_PAGE = """{{header
+ | translator = William Ellis
+ | section  = Book 1
+}}
+
+== BOOK I ==
+
+=== CHAPTER I ===
+
+Every state is a community of some kind.
+
+=== CHAPTER II ===
+
+He who thus considers things in their first growth.
+
+=== CHAPTER III ===
+
+Seeing then that the state is made up of households.
+"""
+
+BARE_HEADINGS = """{{header
+ | translator = A. S. L. Farquharson
+}}
+
+== 1 ==
+
+первая глава
+
+== 2 ==
+
+вторая глава
+"""
+
+NO_HEADINGS = """{{header
+ | translator = Joseph Solomon
+}}
+
+Весь текст одним куском, заголовков нет.
+
+Второй абзац.
+"""
+
+
+def test_page_title_from_url():
+    assert page_title("https://en.wikisource.org/wiki/Politics_(Ellis)") == "Politics (Ellis)"
+    assert page_title("https://en.wikisource.org/wiki/On_Dreams_(Aristotle)") == "On Dreams (Aristotle)"
+
+
+def test_chapter_level_picks_most_frequent():
+    assert chapter_level(PART_PAGE) == 2
+    assert chapter_level(NESTED_PAGE) == 3, "у Политики глав больше, чем книг"
+    assert chapter_level(BARE_HEADINGS) == 2
+    assert chapter_level(NO_HEADINGS) is None
+
+
+def test_parse_page_part_style():
+    translator, chapters = parse_page(PART_PAGE, "I")
+    assert translator == "Arthur Platt"
+    assert [c.number for c in chapters] == [1, 2]
+    assert all(c.book == "I" for c in chapters)
+    assert chapters[0].text.startswith("WE have now discussed")
+    assert "\n\n" in chapters[0].text
+
+
+def test_nested_headings_book_line_is_not_a_chapter():
+    _, chapters = parse_page(NESTED_PAGE, "I")
+    assert [c.number for c in chapters] == [1, 2, 3], \
+        "строка BOOK I главой быть не должна"
+    assert chapters[0].text == "Every state is a community of some kind."
+    assert "BOOK" not in "\n".join(c.text for c in chapters)
+
+
+def test_bare_numeric_headings_are_chapters():
+    _, chapters = parse_page(BARE_HEADINGS, None)
+    assert [c.number for c in chapters] == [1, 2]
+    assert chapters[0].text == "первая глава"
+
+
+def test_unnumbered_same_level_heading_ends_chapters():
+    # На живых данных (On Longevity and Shortness of Life) страница после
+    # последней настоящей главы несёт "== External links==" — заголовок
+    # того же уровня, что и главы, но без номера. Без этой проверки он
+    # становится фиктивной главой, а сырая внешняя ссылка в его теле
+    # утекает в корпус (ловится проверкой шага 8 на "Internet Classics
+    # Archive").
+    raw = ("{{header | translator = X }}\n\n"
+           "== 1 ==\n\nглава одна\n\n"
+           "== External links==\n\n*[http://classics.mit.edu|Archive]\n")
+    _, chapters = parse_page(raw, None)
+    assert [c.number for c in chapters] == [1]
+    assert "External" not in chapters[0].text
+    assert "classics.mit.edu" not in chapters[0].text
+
+
+def test_page_without_headings_is_one_chapter():
+    translator, chapters = parse_page(NO_HEADINGS, None)
+    assert translator == "Joseph Solomon"
+    assert len(chapters) == 1
+    assert chapters[0].number == 1
+    assert "Второй абзац." in chapters[0].text
+
+
+def test_clean_strips_nested_templates():
+    src = "{{translation license|original={{PD-old}}|translation={{PD-1923}}}} текст"
+    assert clean_wikitext(src).strip() == "текст"
+
+
+def test_clean_strips_refs_and_categories():
+    src = ("текст<ref>сноска с [[ссылкой]]</ref> дальше\n"
+           "[[Category:Aristotle]]\n[[fr:Politique]]\n")
+    out = clean_wikitext(src)
+    assert "сноска" not in out
+    assert "Category" not in out
+    assert "fr:" not in out
+    assert "текст дальше" in out
+
+
+def test_clean_keeps_link_text():
+    assert clean_wikitext("см. [[Physics|Физику]] и [[Topics]]") == "см. Физику и Topics"
+
+
+def test_check_usable_rejects_transclusion():
+    raw = '{{header}}\n<pages index="Works of Aristotle v9.djvu" from=425 to=437 />'
+    with pytest.raises(ParseError, match="трансклюзи"):
+        check_usable(raw, "Eudemian Ethics")
+
+
+def test_check_usable_rejects_redirect():
+    with pytest.raises(ParseError, match="редирект"):
+        check_usable("#redirect [[Bring me the sunset in a cup]]", "Problems")
+
+
+def test_check_usable_accepts_normal_page():
+    check_usable(PART_PAGE, "On the Generation of Animals/Book I")
+
+
+def test_book_subpages_filters_non_books_and_sorts():
+    def fake_get(url):
+        return json.dumps({"query": {"allpages": [
+            {"title": "Politics (Ellis)/Book 10"},
+            {"title": "Politics (Ellis)/Book 2"},
+            {"title": "Politics (Ellis)/Introduction"},
+            {"title": "Politics (Ellis)/Book 1"},
+        ]}})
+
+    pages = book_subpages("Politics (Ellis)", fake_get)
+    assert [name for name, _ in pages] == [
+        "Politics (Ellis)/Book 1",
+        "Politics (Ellis)/Book 2",
+        "Politics (Ellis)/Book 10",
+    ]
+    assert [book for _, book in pages] == ["I", "II", "X"]
+
+
+def test_book_subpages_accepts_roman():
+    def fake_get(url):
+        return json.dumps({"query": {"allpages": [
+            {"title": "On the Generation of Animals/Book II"},
+            {"title": "On the Generation of Animals/Book I"},
+        ]}})
+
+    assert [b for _, b in book_subpages("On the Generation of Animals", fake_get)] == ["I", "II"]
+
+
+def test_book_subpages_empty_when_no_subpages():
+    def fake_get(url):
+        return json.dumps({"query": {"allpages": []}})
+
+    assert book_subpages("On Dreams (Aristotle)", fake_get) == []

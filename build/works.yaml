@@ -168,16 +168,16 @@ topics:
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/topics.mb.txt
-virtues-and-vices:
-  title: Virtues and Vices
-  group: ethics
-  authenticity: spurious
-  source: wikisource
-  url: https://en.wikisource.org/wiki/Virtues_and_Vices
-  translator: Joseph Solomon
 on-youth-and-old-age:
   title: On Youth and Old Age, On Life and Death, On Breathing
   group: psychology
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/youth_old.mb.txt
+generation-of-animals:
+  title: On the Generation of Animals
+  group: biology
+  authenticity: genuine
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_the_Generation_of_Animals
+  translator: Arthur Platt
