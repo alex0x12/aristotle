@@ -4145,7 +4145,7 @@ git commit -m "Ветка OpenAI, Deepseek и OpenRouter со склейкой �
 - Потребляет: `provider.Provider`, `provider.Request`, `corpus.Searcher`.
 - Отдаёт:
   - `chat.MaxToolIterations = 4`;
-  - `chat.Session{Provider provider.Provider; Search Finder; System string;
+  - `chat.Session{Provider provider.Provider; Corpus Finder; System string;
     Messages []provider.Message}`;
   - `chat.Finder` — интерфейс `Search(ctx, query, group string, k int) ([]corpus.Hit, error)`;
   - `(*Session) Turn(ctx context.Context, userText string, onText func(string)) (TurnResult, error)`;
@@ -4157,213 +4157,179 @@ git commit -m "Ветка OpenAI, Deepseek и OpenRouter со склейкой �
 - [ ] **Шаг 1: Написать падающий тест цикла**
 
 ```go
-// internal/chat/loop_test.go
 package chat
 
 import (
 	"context"
+	"fmt"
 	"strings"
-	"testing"
 
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
 
-// scriptedProvider отдаёт заранее записанные потоки, по одному на запрос.
-type scriptedProvider struct {
-	turns [][]provider.Event
-	seen  []provider.Request
+// MaxToolIterations — потолок обращений к корпусу за один ход. Без него модель,
+// не найдя нужного, уходит перебирать формулировки.
+const MaxToolIterations = 4
+
+type Finder interface {
+	Search(ctx context.Context, query, group string, k int) ([]corpus.Hit, error)
 }
 
-func (p *scriptedProvider) Stream(_ context.Context, req provider.Request) (provider.Stream, error) {
-	p.seen = append(p.seen, req)
-	events := p.turns[0]
-	p.turns = p.turns[1:]
-	return &scriptedStream{events: events}, nil
+type Session struct {
+	Provider provider.Provider
+	Corpus   Finder
+	System   string
+	Messages []provider.Message
 }
 
-type scriptedStream struct {
-	events []provider.Event
-	cur    provider.Event
+type TurnResult struct {
+	Text       string
+	Chapters   []string
+	Iterations int
+	Exhausted  bool
 }
 
-func (s *scriptedStream) Next() bool {
-	if len(s.events) == 0 {
-		return false
+func argString(input map[string]any, key string) string {
+	if v, ok := input[key].(string); ok {
+		return v
 	}
-	s.cur, s.events = s.events[0], s.events[1:]
-	return true
-}
-func (s *scriptedStream) Event() provider.Event { return s.cur }
-func (s *scriptedStream) Err() error            { return nil }
-func (s *scriptedStream) Close() error          { return nil }
-
-type fakeFinder struct {
-	hits  []corpus.Hit
-	calls int
+	return ""
 }
 
-func (f *fakeFinder) Search(context.Context, string, string, int) ([]corpus.Hit, error) {
-	f.calls++
-	return f.hits, nil
+func argInt(input map[string]any, key string, fallback int) int {
+	switch v := input[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return fallback
 }
 
-func chapterHit(cite, text string) corpus.Hit {
-	return corpus.Hit{Chapter: corpus.Chapter{Cite: cite, Text: text}, Score: 0.9}
+// exhaustedNote — пометка модели о том, что обращений к корпусу больше не
+// будет. Обязана дойти независимо от того, пуста ли последняя выдача:
+// потолок часто достигается именно потому, что предыдущие попытки не
+// устроили модель, и последний поиск на нём вполне может оказаться пустым.
+const exhaustedNote = "(поиск исчерпан: обращений к корпусу больше не будет, " +
+	"отвечай тем, что найдено, либо признай, что не нашёл)"
+
+// renderHits готовит текст результата инструмента: главы целиком со ссылками.
+func renderHits(hits []corpus.Hit, exhausted bool) (string, []string) {
+	if len(hits) == 0 {
+		msg := "В корпусе ничего не найдено по этому запросу."
+		if exhausted {
+			msg += "\n\n" + exhaustedNote
+		}
+		return msg, nil
+	}
+	var b strings.Builder
+	texts := make([]string, 0, len(hits))
+	for _, h := range hits {
+		c := h.Chapter
+		fmt.Fprintf(&b, "### %s\n", c.Cite)
+		if c.Authenticity == "disputed" {
+			b.WriteString("(подлинность этого сочинения оспаривается — сказать об этом)\n")
+		}
+		b.WriteString(c.Text)
+		b.WriteString("\n\n")
+		texts = append(texts, c.Text)
+	}
+	if exhausted {
+		b.WriteString(exhaustedNote + "\n")
+	}
+	return strings.TrimSpace(b.String()), texts
 }
 
-func TestTurnWithoutTools(t *testing.T) {
-	p := &scriptedProvider{turns: [][]provider.Event{{
-		{Kind: provider.EventText, Text: "Начнём "},
-		{Kind: provider.EventText, Text: "с явлений."},
-		{Kind: provider.EventDone, StopReason: "end_turn"},
-	}}}
-	s := &Session{Provider: p, Search: &fakeFinder{}}
+func (s *Session) Turn(ctx context.Context, userText string,
+	onText func(string)) (TurnResult, error) {
 
-	var got strings.Builder
-	res, err := s.Turn(context.Background(), "что такое счастье", func(d string) {
-		got.WriteString(d)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.String() != "Начнём с явлений." {
-		t.Errorf("поток = %q", got.String())
-	}
-	if res.Iterations != 0 {
-		t.Errorf("Iterations = %d, инструмент не звали", res.Iterations)
-	}
-}
+	// baseLen — длина истории до этого хода. Неудачный ход не должен
+	// оставлять следов: если провайдер откажет, история откатывается сюда,
+	// иначе следующий ход допишет вторую пользовательскую реплику подряд, а
+	// это API отвергает.
+	baseLen := len(s.Messages)
+	s.Messages = append(s.Messages,
+		provider.Message{Role: provider.RoleUser, Text: userText})
 
-func TestTurnRunsToolThenAnswers(t *testing.T) {
-	p := &scriptedProvider{turns: [][]provider.Event{
-		{
-			{Kind: provider.EventToolCall, Call: provider.ToolCall{
-				ID: "c1", Name: "search_corpus",
-				Input: map[string]any{"query": "happiness"}}},
-			{Kind: provider.EventDone, StopReason: "tool_use"},
-		},
-		{
-			{Kind: provider.EventText, Text: "Благо человека есть деятельность души."},
-			{Kind: provider.EventDone, StopReason: "end_turn"},
-		},
-	}}
-	f := &fakeFinder{hits: []corpus.Hit{
-		chapterHit("Nicomachean Ethics I.7", "the good of man is an activity of soul")}}
-	s := &Session{Provider: p, Search: f}
+	var res TurnResult
+	var answer strings.Builder
 
-	res, err := s.Turn(context.Background(), "что такое счастье", func(string) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f.calls != 1 {
-		t.Errorf("поиск вызван %d раз", f.calls)
-	}
-	if res.Iterations != 1 {
-		t.Errorf("Iterations = %d", res.Iterations)
-	}
-	if len(res.Chapters) != 1 ||
-		!strings.Contains(res.Chapters[0], "activity of soul") {
-		t.Errorf("Chapters = %+v", res.Chapters)
-	}
-	if res.Exhausted {
-		t.Error("потолок не достигнут, Exhausted должен быть false")
-	}
-}
+	for {
+		req := provider.Request{
+			System:   s.System,
+			Messages: s.Messages,
+		}
+		// Потолок обеспечивается устройством, а не только текстовой
+		// пометкой: как только он достигнут, инструмент физически не
+		// предлагается, и модель не может вызвать его снова.
+		if res.Iterations < MaxToolIterations {
+			req.Tools = []provider.ToolDef{provider.SearchCorpusTool()}
+		}
+		stream, err := s.Provider.Stream(ctx, req)
+		if err != nil {
+			s.Messages = s.Messages[:baseLen]
+			return res, err
+		}
 
-func TestToolResultCarriesCite(t *testing.T) {
-	p := &scriptedProvider{turns: [][]provider.Event{
-		{
-			{Kind: provider.EventToolCall, Call: provider.ToolCall{
-				ID: "c1", Name: "search_corpus",
-				Input: map[string]any{"query": "happiness"}}},
-			{Kind: provider.EventDone, StopReason: "tool_use"},
-		},
-		{{Kind: provider.EventDone, StopReason: "end_turn"}},
-	}}
-	f := &fakeFinder{hits: []corpus.Hit{
-		chapterHit("Nicomachean Ethics I.7", "тело главы")}}
-	s := &Session{Provider: p, Search: f}
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
-		t.Fatal(err)
-	}
-	// Второй запрос должен нести результат инструмента с ссылкой.
-	last := p.seen[len(p.seen)-1]
-	var found bool
-	for _, m := range last.Messages {
-		for _, r := range m.ToolResults {
-			if strings.Contains(r.Content, "Nicomachean Ethics I.7") {
-				found = true
+		var text strings.Builder
+		var calls []provider.ToolCall
+		for stream.Next() {
+			ev := stream.Event()
+			switch ev.Kind {
+			case provider.EventText:
+				text.WriteString(ev.Text)
+				answer.WriteString(ev.Text)
+				if onText != nil {
+					onText(ev.Text)
+				}
+			case provider.EventToolCall:
+				calls = append(calls, ev.Call)
 			}
 		}
-	}
-	if !found {
-		t.Fatal("в результате инструмента нет ссылки на главу")
-	}
-}
-
-func TestEmptySearchIsReportedNotError(t *testing.T) {
-	p := &scriptedProvider{turns: [][]provider.Event{
-		{
-			{Kind: provider.EventToolCall, Call: provider.ToolCall{
-				ID: "c1", Name: "search_corpus",
-				Input: map[string]any{"query": "nginx"}}},
-			{Kind: provider.EventDone, StopReason: "tool_use"},
-		},
-		{{Kind: provider.EventDone, StopReason: "end_turn"}},
-	}}
-	s := &Session{Provider: p, Search: &fakeFinder{}}
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
-		t.Fatal(err)
-	}
-	last := p.seen[len(p.seen)-1]
-	var content string
-	for _, m := range last.Messages {
-		for _, r := range m.ToolResults {
-			content = r.Content
+		if err := stream.Err(); err != nil {
+			stream.Close()
+			s.Messages = s.Messages[:baseLen]
+			return res, err
 		}
-	}
-	if !strings.Contains(content, "ничего не найдено") {
-		t.Fatalf("пустая выдача должна сообщаться словами, получено %q", content)
-	}
-}
+		stream.Close()
 
-func TestCeilingStopsLoopAndMarksExhausted(t *testing.T) {
-	toolTurn := []provider.Event{
-		{Kind: provider.EventToolCall, Call: provider.ToolCall{
-			ID: "c", Name: "search_corpus",
-			Input: map[string]any{"query": "х"}}},
-		{Kind: provider.EventDone, StopReason: "tool_use"},
-	}
-	turns := [][]provider.Event{toolTurn, toolTurn, toolTurn, toolTurn,
-		{{Kind: provider.EventText, Text: "отвечаю тем, что нашёл"},
-			{Kind: provider.EventDone, StopReason: "end_turn"}}}
-	p := &scriptedProvider{turns: turns}
-	f := &fakeFinder{hits: []corpus.Hit{chapterHit("X I.1", "тело")}}
-	s := &Session{Provider: p, Search: f}
+		s.Messages = append(s.Messages, provider.Message{
+			Role:      provider.RoleAssistant,
+			Text:      text.String(),
+			ToolCalls: calls,
+		})
 
-	res, err := s.Turn(context.Background(), "х", func(string) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Iterations != MaxToolIterations {
-		t.Errorf("Iterations = %d, ожидалось %d", res.Iterations, MaxToolIterations)
-	}
-	if !res.Exhausted {
-		t.Error("на потолке Exhausted должен быть true")
-	}
-	last := p.seen[len(p.seen)-1]
-	var content string
-	for _, m := range last.Messages {
-		for _, r := range m.ToolResults {
-			content = r.Content
+		if len(calls) == 0 {
+			res.Text = answer.String()
+			return res, nil
 		}
-	}
-	if !strings.Contains(content, "поиск исчерпан") {
-		t.Fatalf("на потолке модель должна получить пометку, получено %q", content)
-	}
-	if res.Text != "отвечаю тем, что нашёл" {
-		t.Errorf("Text = %q", res.Text)
+
+		res.Iterations++
+		res.Exhausted = res.Iterations >= MaxToolIterations
+
+		results := make([]provider.ToolResult, 0, len(calls))
+		for _, call := range calls {
+			hits, err := s.Corpus.Search(ctx,
+				argString(call.Input, "query"),
+				argString(call.Input, "group"),
+				argInt(call.Input, "k", 6))
+			if err != nil {
+				results = append(results, provider.ToolResult{
+					ID: call.ID, IsError: true,
+					Content: "поиск не удался: " + err.Error(),
+				})
+				continue
+			}
+			content, texts := renderHits(hits, res.Exhausted)
+			res.Chapters = append(res.Chapters, texts...)
+			results = append(results, provider.ToolResult{
+				ID: call.ID, Content: content,
+			})
+		}
+		s.Messages = append(s.Messages, provider.Message{
+			Role: provider.RoleUser, ToolResults: results,
+		})
 	}
 }
 ```
@@ -4535,6 +4501,24 @@ func (s *Session) Turn(ctx context.Context, userText string,
 компилировалась: поле `Search` объявлено интерфейсным типом `Finder`, а вызов
 был написан как `s.Search(ctx, ...)` — обращение к полю как к функции, чего
 в Go нет. Исправлено вызовом метода: `s.Search.Search(ctx, ...)`.
+
+**Код выше — поставленный.** Помимо несобиравшегося вызова, ревью нашло
+четыре дефекта первой редакции, и два ломали замысел цикла:
+
+- пометка «поиск исчерпан» терялась, если последний поиск оказывался пустым —
+  а на четвёртом заходе это как раз вероятно: модель дошла до потолка потому,
+  что прежние попытки её не устроили;
+- потолок был не потолком, а просьбой: определение инструмента клалось
+  в запрос на каждом круге, и счётчик мог расти без границы. Теперь после
+  потолка инструмент не предлагается вовсе, и завершение цикла гарантировано
+  устройством, а не доброй волей модели;
+- ошибка провайдера посреди хода оставляла в истории реплику пользователя
+  без ответа. Следующий ход дописывал вторую подряд с той же ролью, что
+  Anthropic API отвергает с кодом 400: один сетевой сбой ломал сессию
+  навсегда и молча. Теперь неудачный ход откатывает историю к исходной длине;
+- поле `Search` переименовано в `Corpus` — вызов читался как `s.Search.Search(...)`.
+
+Тестов в пакете 13.
 
 - [ ] **Шаг 4: Запустить тест, убедиться что проходит**
 
@@ -5197,7 +5181,7 @@ func main() {
 
 	session := &chat.Session{
 		Provider: prov,
-		Search:   &corpus.Searcher{Collection: "aristotle", Root: filepath.Join(*root, "corpus")},
+		Corpus:   &corpus.Searcher{Collection: "aristotle", Root: filepath.Join(*root, "corpus")},
 		System:   system,
 	}
 	printer := &render.Printer{Out: os.Stdout, Color: true}
@@ -5613,7 +5597,7 @@ func runEval(path string, session *chat.Session, searcher *corpus.Searcher,
 		// протекают в контекст и портят замер.
 		fresh := &chat.Session{
 			Provider: session.Provider,
-			Search:   session.Search,
+			Corpus:   session.Corpus,
 			System:   session.System,
 		}
 		parser := &render.Parser{}
@@ -5670,7 +5654,7 @@ func runEval(path string, session *chat.Session, searcher *corpus.Searcher,
 		Collection: "aristotle",
 		Root:       filepath.Join(*root, "corpus"),
 	}
-	session := &chat.Session{Provider: prov, Search: searcher, System: system}
+	session := &chat.Session{Provider: prov, Corpus: searcher, System: system}
 
 	if *evalPath != "" {
 		os.Exit(runEval(*evalPath, session, searcher, *recallOnly))
