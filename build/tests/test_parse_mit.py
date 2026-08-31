@@ -88,6 +88,111 @@ def test_bare_number_ignored_when_work_uses_parts():
     assert "не глава" in chapters[0].text
 
 
+def test_glued_part_marker_returns_remainder_as_chapter_text():
+    # Как в on-youth-and-old-age/posterior-analytics: строка-маркер
+    # склеена без пустой строки с первым словом реального текста главы
+    # ("Part 15 Some animals..."). Остаток должен войти в текст главы,
+    # а не потеряться.
+    raw = (
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nPart 1 \n\nfirst chapter\n\n"
+        "Part 2 Some animals occupy the water, others live on land,\n"
+        "and that being so, this chapter continues normally.\n\n"
+        "Part 3 \n\nthird chapter\n\nTHE END\n"
+    )
+    _, chapters = parse(raw)
+    assert [c.number for c in chapters] == [1, 2, 3]
+    assert chapters[1].text == (
+        "Some animals occupy the water, others live on land, "
+        "and that being so, this chapter continues normally."
+    )
+
+
+def test_glued_marker_symbol_does_not_become_its_own_paragraph():
+    # Как в metaphysics: маркер склеен с одиночным символом-кавычкой
+    # ("Part 2 \""), а настоящий абзац отделён от него пустой строкой.
+    # Кавычка не должна стать отдельным "абзацем" из одного знака —
+    # она приклеивается к началу первого непустого текста после неё.
+    raw = (
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nPart 1 \n\nfirst chapter\n\n"
+        "Part 2 \"\n\n"
+        "\"Since we are seeking this knowledge, we must inquire of what kind\n"
+        "are the causes and the principles.\n\n"
+        "Part 3 \n\nthird chapter\n\nTHE END\n"
+    )
+    _, chapters = parse(raw)
+    assert chapters[1].number == 2
+    paragraphs = chapters[1].text.split("\n\n")
+    assert not any(len(p.strip()) <= 1 for p in paragraphs), \
+        "ни один абзац не должен состоять из одного знака препинания"
+    assert paragraphs[0].startswith('" "Since we are seeking this knowledge')
+
+
+def test_standalone_stray_symbol_line_merges_into_next_paragraph():
+    # Живая находка при перепроверке metaphysics: осиротевшая кавычка не
+    # всегда приклеена к маркеру — иногда это отдельная строка "Part 1"
+    # (чистая, без хвоста), пустая строка, отдельная строка из одной
+    # кавычки, снова пустая строка, и только потом настоящий абзац. Это
+    # уже не про склейку маркера, а про тело главы вообще — чинится общим
+    # правилом в _reflow, а не только для строки-открывашки.
+    raw = (
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nPart 1 \n\n\"\n\n"
+        "\"The investigation of the truth is hard in one way, easy in another.\n"
+        "An indication of this is found in the fact that no one attains it.\n\n"
+        "Part 2 \n\nsecond chapter\n\nTHE END\n"
+    )
+    _, chapters = parse(raw)
+    assert chapters[0].number == 1
+    paragraphs = chapters[0].text.split("\n\n")
+    assert not any(len(p.strip()) <= 1 for p in paragraphs), \
+        "ни один абзац не должен состоять из одного знака препинания"
+    assert paragraphs[0].startswith(
+        '" "The investigation of the truth is hard in one way'
+    )
+
+
+def test_stray_part_looking_line_with_matching_number_is_contained():
+    # Расширение PART_RE — риск: обычная фраза, случайно начавшая строку
+    # словами "Part 2 ...", неотличима от настоящего маркера, если число
+    # совпадает с ожидаемым следующим номером (last + 1) — глава откроется
+    # ошибочно. Но урон локален: следующий настоящий маркер (Part 3)
+    # по-прежнему требует строгого +1 и синхронизируется корректно, а не
+    # теряется вместе со всем, что после него.
+    raw = (
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nPart 1 \n\nfirst chapter begins here.\n\n"
+        "Part 2 of the discussion is developed further below, by coincidence.\n\n"
+        "Part 3 \n\nreal third chapter text\n\nTHE END\n"
+    )
+    _, chapters = parse(raw)
+    assert [c.number for c in chapters] == [1, 2, 3]
+    assert chapters[1].text == (
+        "of the discussion is developed further below, by coincidence."
+    )
+    assert chapters[2].text == "real third chapter text"
+
+
+def test_single_stray_part_line_does_not_flip_bare_number_style():
+    # Раньше единственной строки, похожей на "Part N", было достаточно,
+    # чтобы выключить голые цифры во всей работе — здесь это привело бы
+    # к нулю глав (ParseError), хотя работа целиком в голом-цифровом
+    # стиле. Теперь для part-стиля нужно, чтобы среди строк "Part N"
+    # нашлись оба первых номера — 1 и 2, а не один случайный.
+    raw = (
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\n1 \n\nfirst chapter text.\n\n"
+        "Part 7 of an unrelated treatise argues differently, but that is "
+        "beside the point.\n\n"
+        "2 \n\nsecond chapter\n\nTHE END\n"
+    )
+    _, chapters = parse(raw)
+    assert [c.number for c in chapters] == [1, 2]
+    assert [c.book for c in chapters] == [None, None]
+    assert "second chapter" in chapters[1].text
+
+
 def test_rejects_text_without_header_rule():
     with pytest.raises(ParseError, match="шапк"):
         parse("Nicomachean Ethics\nBy Aristotle\nno rule line here\n")
