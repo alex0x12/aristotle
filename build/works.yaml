@@ -1,0 +1,174 @@
+athenian-constitution:
+  title: The Athenian Constitution
+  group: politics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/athenian_const.mb.txt
+categories:
+  title: Categories
+  group: logic
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/categories.mb.txt
+on-dreams:
+  title: On Dreams
+  group: psychology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/dreams.mb.txt
+gait-of-animals:
+  title: On the Gait of Animals
+  group: biology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/gait_anim.mb.txt
+generation-and-corruption:
+  title: On Generation and Corruption
+  group: physics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/gener_corr.mb.txt
+on-the-heavens:
+  title: On the Heavens
+  group: physics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/heavens.mb.txt
+history-of-animals:
+  title: The History of Animals
+  group: biology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/history_anim.mb.txt
+on-interpretation:
+  title: On Interpretation
+  group: logic
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/interpretation.mb.txt
+longevity-and-shortness-of-life:
+  title: On Longevity and Shortness of Life
+  group: psychology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/longev_short.mb.txt
+on-memory:
+  title: On Memory and Reminiscence
+  group: psychology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/memory.mb.txt
+metaphysics:
+  title: Metaphysics
+  group: metaphysics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/metaphysics.mb.txt
+meteorology:
+  title: Meteorology
+  group: physics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/meteorology.mb.txt
+movement-of-animals:
+  title: On the Motion of Animals
+  group: biology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/motion_animals.mb.txt
+nicomachean-ethics:
+  title: Nicomachean Ethics
+  group: ethics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/nicomachaen.mb.txt
+parts-of-animals:
+  title: On the Parts of Animals
+  group: biology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/parts_animals.mb.txt
+physics:
+  title: Physics
+  group: physics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/physics.mb.txt
+poetics:
+  title: Poetics
+  group: rhetoric-poetics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/poetics.mb.txt
+politics:
+  title: Politics
+  group: politics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/politics.mb.txt
+posterior-analytics:
+  title: Posterior Analytics
+  group: logic
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/posterior.mb.txt
+prior-analytics:
+  title: Prior Analytics
+  group: logic
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/prior.mb.txt
+on-prophesying-by-dreams:
+  title: On Prophesying by Dreams
+  group: psychology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/prophesying.mb.txt
+rhetoric:
+  title: Rhetoric
+  group: rhetoric-poetics
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/rhetoric.mb.txt
+on-sense-and-the-sensible:
+  title: On Sense and the Sensible
+  group: psychology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/sense.mb.txt
+on-sleep:
+  title: On Sleep and Sleeplessness
+  group: psychology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/sleep.mb.txt
+sophistical-refutations:
+  title: On Sophistical Refutations
+  group: logic
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/sophist_refut.mb.txt
+on-the-soul:
+  title: On the Soul
+  group: psychology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/soul.mb.txt
+topics:
+  title: Topics
+  group: logic
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/topics.mb.txt
+virtues-and-vices:
+  title: Virtues and Vices
+  group: ethics
+  authenticity: spurious
+  source: mit
+  url: https://classics.mit.edu/Aristotle/aristot.vir.mb.txt
+on-youth-and-old-age:
+  title: On Youth and Old Age, On Life and Death, On Breathing
+  group: psychology
+  authenticity: genuine
+  source: mit
+  url: https://classics.mit.edu/Aristotle/youth_old.mb.txt
