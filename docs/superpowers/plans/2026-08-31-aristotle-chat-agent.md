@@ -2105,13 +2105,13 @@ func Builtin() Config {
 			"deepseek": {
 				Kind:    "openai",
 				BaseURL: "https://api.deepseek.com/v1",
-				Model:   "deepseek-chat",
+				Model:   "deepseek-v4-pro",
 				KeyEnv:  "DEEPSEEK_API_KEY",
 			},
 			"openai": {
 				Kind:    "openai",
 				BaseURL: "https://api.openai.com/v1",
-				Model:   "gpt-5.1",
+				Model:   "gpt-5.6",
 				KeyEnv:  "OPENAI_API_KEY",
 			},
 			"openrouter": {
@@ -2194,12 +2194,21 @@ func (p Profile) APIKey() (string, error) {
 Выполнить: `go test ./internal/config/ -v`
 Ожидается: PASS, 7 тестов
 
-- [ ] **Шаг 6: Сверить ID моделей с действующей документацией**
+- [ ] **Шаг 6: Сверено с документацией 31 августа 2026**
 
-Открытый пункт 9.2 спеки. Проверить у Deepseek и OpenAI актуальные
-идентификаторы и поддерживает ли рассуждающая модель Deepseek вызов функций.
-Если `deepseek-reasoner` функции не поддерживает — оставить в профиле
-`deepseek-chat` и записать это в README, а не молча ломать инструмент.
+Открытый пункт 9.2 спеки закрыт, идентификаторы выше проверены у первоисточников:
+
+- **OpenAI**: `gpt-5.6` — действующий алиас на флагман `gpt-5.6-sol`. Модели
+  `gpt-5.1`, стоявшей в первой редакции плана, не существует;
+- **Deepseek**: линейка — `deepseek-v4-flash`, `deepseek-v4-pro`,
+  `deepseek-v4-flash-vision-exp`. **Все три поддерживают вызов функций**,
+  так что опасение насчёт рассуждающей модели снято. В профиле стоит
+  `deepseek-v4-pro`; `deepseek-v4-flash` — дешёвая замена, упомянуть в README.
+  Идентификаторов `deepseek-chat` и `deepseek-reasoner` в действующей
+  документации нет.
+
+Ничего проверять на этом шаге не нужно — данные уже внесены. Если при работе
+обнаружится расхождение с живым API, сообщить, а не подгонять.
 
 - [ ] **Шаг 7: Коммит**
 
