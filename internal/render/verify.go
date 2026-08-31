@@ -39,33 +39,44 @@ func Verify(quote string, chapters []string) bool {
 		return false
 	}
 
-	normalized := make([]string, 0, len(chapters))
+	quoteWords := strings.Fields(q)
+	if len(quoteWords) == 0 {
+		return false
+	}
+
+	// Шаг 1: поиск точной подстроки.
 	for _, c := range chapters {
 		n := Normalize(c)
 		if strings.Contains(n, q) {
 			return true
 		}
-		normalized = append(normalized, n)
 	}
 
-	words := strings.Fields(q)
-	if len(words) == 0 {
+	// Шаг 2: если цитата короче 6 слов, точное вхождение обязательно.
+	if len(quoteWords) < 6 {
 		return false
 	}
+
+	// Шаг 2: жадный поиск подпоследовательности с сохранением порядка.
 	// Слова считаются только внутри одной главы: набор из разных глав
 	// цитатой не является.
-	for _, n := range normalized {
-		present := make(map[string]bool)
-		for _, w := range strings.Fields(n) {
-			present[w] = true
-		}
-		hit := 0
-		for _, w := range words {
-			if present[w] {
-				hit++
+	for _, c := range chapters {
+		n := Normalize(c)
+		chapterWords := strings.Fields(n)
+
+		// Жадный поиск подпоследовательности.
+		quoteIdx := 0
+		chapterIdx := 0
+
+		for chapterIdx < len(chapterWords) && quoteIdx < len(quoteWords) {
+			if chapterWords[chapterIdx] == quoteWords[quoteIdx] {
+				quoteIdx++
 			}
+			chapterIdx++
 		}
-		if float64(hit)/float64(len(words)) >= Threshold {
+
+		hit := quoteIdx
+		if float64(hit)/float64(len(quoteWords)) >= Threshold {
 			return true
 		}
 	}

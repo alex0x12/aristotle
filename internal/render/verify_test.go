@@ -69,3 +69,75 @@ func TestVerifyNoChaptersIsFalse(t *testing.T) {
 		t.Fatal("без выдержек подтверждать нечем")
 	}
 }
+
+// Атака 1: служебные слова, собранные не по порядку.
+func TestRejectsFunctionalWordsOutOfOrder(t *testing.T) {
+	q := "if there are more than one and the best of man"
+	if Verify(q, []string{passage}) {
+		t.Fatal("служебные слова не по порядку не образуют цитату")
+	}
+}
+
+// Атака 2: переставленная лексика главы.
+func TestRejectsPermutedLexicon(t *testing.T) {
+	q := "the best and most complete virtue turns out to be the good of man in accordance with soul"
+	if Verify(q, []string{passage}) {
+		t.Fatal("переставленная лексика не должна проходить")
+	}
+}
+
+// Атака 3: слово повторено многократно.
+func TestRejectsRepeatedWord(t *testing.T) {
+	q := "the the the the the the the the the the"
+	if Verify(q, []string{passage}) {
+		t.Fatal("повторённое слово не должно начисляться многократно")
+	}
+}
+
+// Атака 4: цитата в одно слово, отсутствующая дословно.
+func TestRejectionSingleWord(t *testing.T) {
+	q := "happiness"
+	if Verify(q, []string{passage}) {
+		t.Fatal("одно слово, отсутствующее дословно, не должна проходить")
+	}
+}
+
+// Атака 4 продолжение: цитата в два слова, отсутствующая дословно.
+func TestRejectionTwoWords(t *testing.T) {
+	q := "happiness virtue"
+	if Verify(q, []string{passage}) {
+		t.Fatal("два слова, отсутствующие дословно, не должны проходить")
+	}
+}
+
+// Законный случай: склейка двух соседних предложений главы.
+func TestAcceptsJoinedSentences(t *testing.T) {
+	q := "an activity of soul in accordance with virtue and if there are more than one virtue"
+	if !Verify(q, []string{passage}) {
+		t.Fatal("склейка двух соседних предложений должна проходить")
+	}
+}
+
+// Законный случай: точное вхождение короткой цитаты (три слова).
+func TestAcceptsExactShortQuote(t *testing.T) {
+	q := "in accordance with"
+	if !Verify(q, []string{passage}) {
+		t.Fatal("точное вхождение короткой цитаты должна проходить")
+	}
+}
+
+// Кириллица нормализуется верно.
+func TestNormalizeCyrillic(t *testing.T) {
+	if got := Normalize("Привет, МИР!"); got != "привет мир" {
+		t.Fatalf("кириллица нормализуется неверно: %q", got)
+	}
+}
+
+// Цитата длиннее главы из настоящих слов отвергается.
+func TestRejectsLongerThanSource(t *testing.T) {
+	chapter := "the good of man"
+	q := "the good of man turns out to be an activity of soul in accordance with virtue"
+	if Verify(q, []string{chapter}) {
+		t.Fatal("цитата длиннее главы не должна проходить")
+	}
+}
