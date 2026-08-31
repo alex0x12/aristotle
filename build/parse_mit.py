@@ -40,6 +40,15 @@ def _to_int(token: str) -> int:
     return int(token) if token.isdigit() else roman_to_int(token)
 
 
+def _is_punctuation_scrap(paragraph: str) -> bool:
+    # Критерий — состав, а не длина: "абзац" считается осколком склейки,
+    # только если в нём нет ни одной буквы и ни одной цифры (кавычка,
+    # апостроф, тире и т.п.). Короткий, но осмысленный абзац вроде "7"
+    # или "A" (перечисление, ссылка на пункт, случайное число в тексте)
+    # под это не подходит и не трогается.
+    return not any(ch.isalnum() for ch in paragraph)
+
+
 def _merge_stray_symbols(paragraphs: list[str]) -> list[str]:
     # Изредка исходник MIT содержит "абзац" из одного знака препинания —
     # осиротевшую кавычку на отдельной строке между двумя пустыми (не
@@ -54,7 +63,7 @@ def _merge_stray_symbols(paragraphs: list[str]) -> list[str]:
         if pending is not None:
             paragraph = pending + " " + paragraph
             pending = None
-        if len(paragraph.strip()) <= 1:
+        if _is_punctuation_scrap(paragraph):
             pending = paragraph
             continue
         merged.append(paragraph)

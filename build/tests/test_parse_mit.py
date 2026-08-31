@@ -74,7 +74,12 @@ def test_stray_number_does_not_open_chapter():
     )
     _, chapters = parse(raw)
     assert [c.number for c in chapters] == [1, 2]
-    assert "still the first chapter" in chapters[0].text
+    # Точное равенство, а не вхождение: "7" — законный короткий абзац
+    # (число внутри текста, не маркер), _merge_stray_symbols не должен
+    # его трогать и склеивать со следующим абзацем.
+    assert chapters[0].text == (
+        "first chapter text\n\nhe counted them:\n\n7\n\nstill the first chapter"
+    )
 
 
 def test_bare_number_ignored_when_work_uses_parts():
@@ -151,6 +156,21 @@ def test_standalone_stray_symbol_line_merges_into_next_paragraph():
     assert paragraphs[0].startswith(
         '" "The investigation of the truth is hard in one way'
     )
+
+
+def test_reflow_leaves_legitimate_short_paragraphs_untouched():
+    # Отрицательный тест на воздержание: абзац из одной буквы или цифры —
+    # законный текст (перечисление, ссылка на пункт, число), а не осколок
+    # склеенного маркера. _merge_stray_symbols должен пропустить такую
+    # главу через _reflow вообще без изменений — точное равенство, а не
+    # вхождение.
+    raw = (
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nPart 1 \n\nfirst paragraph\n\nA\n\n7\n\nlast paragraph\n\n"
+        "Part 2 \n\nsecond chapter\n\nTHE END\n"
+    )
+    _, chapters = parse(raw)
+    assert chapters[0].text == "first paragraph\n\nA\n\n7\n\nlast paragraph"
 
 
 def test_stray_part_looking_line_with_matching_number_is_contained():
