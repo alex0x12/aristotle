@@ -2571,7 +2571,6 @@ func TestSearchSkipsMissingFile(t *testing.T) {
 - [ ] **Шаг 7: Написать поиск**
 
 ```go
-// internal/corpus/search.go
 package corpus
 
 import (
@@ -2603,10 +2602,6 @@ type Searcher struct {
 	Run        func(ctx context.Context, args ...string) ([]byte, error)
 }
 
-// RunQmd берёт только stdout. Это существенно: `qmd query` печатает ход работы
-// (расширение запроса, реранк) в stderr, и там же он остаётся — stdout несёт
-// чистый JSON. Заменить `.Output()` на `.CombinedOutput()` значит смешать
-// преамбулу с данными и сломать разбор.
 func RunQmd(ctx context.Context, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, "qmd", args...).Output()
 }
@@ -2636,16 +2631,29 @@ func (s *Searcher) Search(ctx context.Context, query, group string, k int) ([]Hi
 
 	prefix := "qmd://" + s.Collection + "/"
 	hits := make([]Hit, 0, len(results))
+	read := 0
+	parsed := 0
 	for _, r := range results {
 		rel := strings.TrimPrefix(r.File, prefix)
-		data, err := os.ReadFile(filepath.Join(s.Root, rel))
+
+		joined := filepath.Join(s.Root, rel)
+		safe, err := filepath.Rel(s.Root, joined)
+		if err != nil || safe == ".." || strings.HasPrefix(safe, ".."+string(filepath.Separator)) {
+			continue // выдача qmd пытается увести чтение за пределы корня корпуса
+		}
+
+		data, err := os.ReadFile(joined)
 		if err != nil {
 			continue // индекс отстал от диска — не роняем беседу
 		}
+		read++
+
 		ch, err := ParseChapter(rel, data)
 		if err != nil {
-			continue
+			continue // главы читаются, но эта не разбирается — не роняем беседу целиком
 		}
+		parsed++
+
 		if ch.Authenticity == "spurious" {
 			continue
 		}
@@ -2654,9 +2662,48 @@ func (s *Searcher) Search(ctx context.Context, query, group string, k int) ([]Hi
 		}
 		hits = append(hits, Hit{Chapter: ch, Score: r.Score})
 	}
+	// Разделяем два разных отказа от честной пустоты. Оба счётчика растут до
+	// фильтров spurious/group, поэтому выдача, целиком отсеянная фильтром —
+	// все главы подлинные и разобранные, просто не той группы, — законная
+	// пустота и сюда не попадает.
+	switch {
+	case len(results) > 0 && read == 0:
+		// Ни одна глава не прочиталась с диска — почти наверняка неверно
+		// указан корень корпуса.
+		return nil, fmt.Errorf(
+			"qmd вернул %d попаданий, но ни одна глава не прочиталась с диска; "+
+				"похоже, неверный корень корпуса: %s", len(results), s.Root)
+	case read > 0 && parsed == 0:
+		// Главы читаются, но ни одна не разбирается — похоже, корпус собран
+		// не тем конвейером, или его схема разошлась с ожидаемой.
+		return nil, fmt.Errorf(
+			"qmd вернул %d попаданий, главы читаются, но ни одна не разобралась; "+
+				"похоже, корпус собран не тем конвейером или разошёлся со схемой", len(results))
+	}
+	// Пропуск отдельных нечитаемых или неразбираемых файлов при том, что
+	// другие прочлись и разобрались, остаётся молчаливым: индекс мог просто
+	// отстать от диска. Выдача, целиком отсеянная фильтрами spurious/group,
+	// — тоже законная пустота, а не сбой.
 	return hits, nil
 }
 ```
+
+**Реализация укреплена сверх первой редакции по итогам ревью**, и код выше —
+поставленный, а не эталонный:
+
+- проверяются все обязательные поля frontmatter, а не только `cite`. `book`
+  и `translator` обязательными не считаются: в схеме они законно бывают
+  пустыми;
+- путь из выдачи qmd удерживается в границах корня через `filepath.Rel` —
+  значение с `..` не уводит чтение наружу;
+- два счётчика вместо молчаливых пропусков разделяют четыре исхода:
+  ничего не прочлось (ошибка, неверный корень), прочлось но не разобралось
+  (ошибка, негодный корпус), разобралось но отсеяно фильтрами (законная
+  пустота), qmd не нашёл ничего (законная пустота). Оба счётчика растут
+  **до** фильтров: иначе выдача, целиком отсеянная по группе, стала бы
+  ошибкой.
+
+Тестов в пакете 18.
 
 - [ ] **Шаг 8: Запустить все тесты пакета**
 
