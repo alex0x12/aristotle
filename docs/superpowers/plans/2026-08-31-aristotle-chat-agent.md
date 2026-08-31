@@ -29,8 +29,8 @@ qmd 2.8.3, Anthropic Go SDK, OpenAI-совместимые API.
 - **`MaxTokens` при стриминге — 64000.** Поле `Thinking` на Opus 5 не трогаем.
 - **Только `https` при обращении к classics.mit.edu.** По `http` сайт молча
   редиректит любой URL на корень и отдаёт главную с кодом 200.
-- **Зависимости Python — только PyYAML.** HTML не разбираем, сеть через
-  stdlib `urllib`.
+- **Рантайм-зависимости Python — только PyYAML** (в тестах ещё pytest).
+  HTML не разбираем, сеть через stdlib `urllib`.
 - **Зависимости Go — только Anthropic SDK.** OpenAI-совместимая ветка пишется
   на stdlib `net/http` и `encoding/json`.
 - **Модуль Go:** `github.com/alex0x12/aristotle`.
@@ -66,7 +66,9 @@ internal/
   chat/history.go           JSONL
   chat/loop.go              цикл инструмента
   eval/eval.go              прогон метрик
-cmd/aristotle/main.go
+  persona/persona.go        детерминированная сборка системного промпта
+cmd/aristotle/main.go       цикл беседы, команды
+cmd/aristotle/eval.go       подкоманда прогона метрик
 eval/questions.yaml
 ```
 
