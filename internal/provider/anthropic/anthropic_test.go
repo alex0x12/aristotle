@@ -56,6 +56,28 @@ func TestRequiredFieldsRejectsAnySliceWithNonString(t *testing.T) {
 	}
 }
 
+func TestParamsUsesProfileMaxTokensOverride(t *testing.T) {
+	c := &client{model: "claude-opus-5", maxTokens: 4096}
+	p, err := c.params(provider.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.MaxTokens != 4096 {
+		t.Fatalf("MaxTokens = %d, ожидалось 4096 (потолок профиля)", p.MaxTokens)
+	}
+}
+
+func TestParamsWithoutProfileOverrideUsesDefault(t *testing.T) {
+	c := &client{model: "claude-opus-5"}
+	p, err := c.params(provider.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.MaxTokens != provider.DefaultMaxTokens {
+		t.Fatalf("MaxTokens = %d, ожидалось %d (умолчание)", p.MaxTokens, provider.DefaultMaxTokens)
+	}
+}
+
 func TestParamsRejectsUnparsableRequired(t *testing.T) {
 	c := &client{model: "claude-opus-5"}
 	req := provider.Request{

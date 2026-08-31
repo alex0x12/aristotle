@@ -31,6 +31,11 @@ type Session struct {
 	// корпус (5.5) — и со стороны это неотличимо от честной пустоты, если
 	// пользователь не увидит предупреждение отдельно.
 	OnSearchWarning func(msg string)
+
+	// OnSearchStart — необязательный колбэк, вызываемый перед каждым
+	// обращением к поиску. Холодный qmd поднимается 8-13 секунд, и без
+	// какого-либо признака работы это неотличимо от зависания.
+	OnSearchStart func(query, group string)
 }
 
 type TurnResult struct {
@@ -95,8 +100,21 @@ func renderHits(hits []corpus.Hit, exhausted bool) (string, []corpus.Chapter) {
 	return strings.TrimSpace(b.String()), chapters
 }
 
+// Turn проводит один ход диалога. onText получает дельты текста по мере
+// поступления от провайдера — вызывающая сторона обязана печатать их сразу,
+// не дожидаясь конца хода: холодный провайдер и до четырёх обращений к
+// поиску легко растягивают ход до минуты, и пустой экран всё это время
+// неотличим от зависания.
+//
+// onChapters (может быть nil) вызывается сразу после каждого обращения к
+// поиску с полным списком глав, накопленным к этому моменту. Смысл в том,
+// что главы известны раньше, чем модель напишет первую выдержку: поиск в
+// этой архитектуре всегда завершается до начала генерации ответа. Значит
+// вызывающая сторона может печатать врезки (cite/en/ru) по мере поступления
+// текста ответа, сверяя их с уже готовым списком глав, а не только после
+// того, как весь ход закончится.
 func (s *Session) Turn(ctx context.Context, userText string,
-	onText func(string)) (TurnResult, error) {
+	onText func(string), onChapters func([]corpus.Chapter)) (TurnResult, error) {
 
 	// baseLen — длина истории до этого хода. Неудачный ход не должен
 	// оставлять следов: если провайдер откажет, история откатывается сюда,
@@ -164,9 +182,12 @@ func (s *Session) Turn(ctx context.Context, userText string,
 
 		results := make([]provider.ToolResult, 0, len(calls))
 		for _, call := range calls {
-			hits, err := s.Corpus.Search(ctx,
-				argString(call.Input, "query"),
-				argString(call.Input, "group"),
+			query := argString(call.Input, "query")
+			group := argString(call.Input, "group")
+			if s.OnSearchStart != nil {
+				s.OnSearchStart(query, group)
+			}
+			hits, err := s.Corpus.Search(ctx, query, group,
 				argInt(call.Input, "k", 6))
 			if err != nil {
 				msg := "поиск не удался: " + err.Error()
@@ -181,6 +202,9 @@ func (s *Session) Turn(ctx context.Context, userText string,
 			}
 			content, chapters := renderHits(hits, res.Exhausted)
 			res.Chapters = append(res.Chapters, chapters...)
+			if onChapters != nil {
+				onChapters(res.Chapters)
+			}
 			results = append(results, provider.ToolResult{
 				ID: call.ID, Content: content,
 			})

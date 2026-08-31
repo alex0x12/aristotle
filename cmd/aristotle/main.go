@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,71 @@ func newProvider(p config.Profile) (provider.Provider, error) {
 	default:
 		return nil, fmt.Errorf("профиль %s: неизвестный kind %q", p.Name, p.Kind)
 	}
+}
+
+// switchProfile разрешает имя профиля и создаёт для него провайдера. Не
+// трогает ничего снаружи: при ошибке (нет такого профиля, не задан ключ)
+// вызывающая сторона просто не подставляет возвращённые значения, и прежний
+// профиль остаётся рабочим.
+func switchProfile(cfg config.Config, name string) (config.Profile, provider.Provider, error) {
+	p, err := cfg.Resolve(name)
+	if err != nil {
+		return config.Profile{}, nil, err
+	}
+	prov, err := newProvider(p)
+	if err != nil {
+		return config.Profile{}, nil, err
+	}
+	return p, prov, nil
+}
+
+// profileNames — отсортированный список имён профилей, для подсказки в /model.
+func profileNames(cfg config.Config) []string {
+	names := make([]string, 0, len(cfg.Profiles))
+	for name := range cfg.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// resumeMessages превращает записи истории в сообщения провайдера. Роли,
+// которых чат не понимает (не "user" и не "assistant" — например, битая
+// запись с пустой ролью), пропускаются, а не роняют восстановление целиком.
+func resumeMessages(records []chat.Record) []provider.Message {
+	msgs := make([]provider.Message, 0, len(records))
+	for _, rec := range records {
+		var role provider.Role
+		switch rec.Role {
+		case "user":
+			role = provider.RoleUser
+		case "assistant":
+			role = provider.RoleAssistant
+		default:
+			continue
+		}
+		msgs = append(msgs, provider.Message{Role: role, Text: rec.Text})
+	}
+	return msgs
+}
+
+// lastUserMessage ищет последнюю реплику пользователя в истории сессии —
+// для /again. Пустая строка означает, что повторять нечего.
+//
+// Результаты инструмента тоже несут Role: RoleUser (так chat.Session.Turn
+// передаёт их провайдеру — см. internal/chat/loop.go) и идут в Messages
+// вперемешку с настоящими репликами человека. У них Text всегда пуст и
+// заполнен только ToolResults, поэтому такие записи обязаны пропускаться:
+// иначе после хода с обращением к поиску /again находит пустую строку от
+// последнего результата инструмента, а не настоящий последний вопрос.
+func lastUserMessage(msgs []provider.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role == provider.RoleUser && len(m.ToolResults) == 0 {
+			return m.Text
+		}
+	}
+	return ""
 }
 
 func main() {
@@ -77,16 +143,46 @@ func main() {
 	session := &chat.Session{Provider: prov, Corpus: searcher, System: system,
 		OnSearchWarning: func(msg string) {
 			fmt.Fprintln(os.Stderr, "предупреждение:", msg)
-		}}
+		},
+		// Холодный qmd поднимается 8-13 секунд, и до четырёх обращений за
+		// ход — молчание всё это время неотличимо от зависания.
+		OnSearchStart: func(query, group string) {
+			fmt.Fprintf(os.Stderr, "[ищу в корпусе: %s]\n", query)
+		},
+	}
 
 	if *evalPath != "" {
 		os.Exit(runEval(*evalPath, session, searcher, *recallOnly))
 	}
 	printer := &render.Printer{Out: os.Stdout, Color: true}
 
-	fmt.Printf("Аристотель. Профиль %s (%s). /src, /model, /quit.\n",
+	fmt.Printf("Аристотель. Профиль %s (%s). /src, /model, /again, /quit.\n",
 		profile.Name, profile.Model)
 	fmt.Println("История:", historyPath)
+
+	if *resume != "" {
+		records, err := history.Load()
+		switch {
+		case err != nil:
+			fmt.Fprintln(os.Stderr, "история повреждена, начинаю новую беседу:", err)
+		case len(records) == 0:
+			fmt.Fprintln(os.Stderr, "история пуста или не найдена, начинаю новую беседу")
+		default:
+			session.Messages = resumeMessages(records)
+			fmt.Printf("возобновлено реплик: %d\n", len(session.Messages))
+		}
+	}
+
+	// historyWarned — предупреждение о неработающем журнале печатается один
+	// раз за сессию, а не на каждой реплике: если ~/.local/share недоступен,
+	// это одна и та же причина всякий раз.
+	var historyWarned bool
+	appendHistory := func(rec chat.Record) {
+		if err := history.Append(rec); err != nil && !historyWarned {
+			fmt.Fprintln(os.Stderr, "предупреждение: журнал беседы не записывается:", err)
+			historyWarned = true
+		}
+	}
 
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -99,13 +195,29 @@ func main() {
 		if line == "" {
 			continue
 		}
-		switch {
-		case line == "/quit":
+
+		fields := strings.Fields(line)
+		switch fields[0] {
+		case "/quit":
 			return
-		case line == "/model":
-			fmt.Printf("%s (%s)\n", profile.Name, profile.Model)
+
+		case "/model":
+			if len(fields) < 2 {
+				fmt.Printf("текущий профиль: %s (%s)\n", profile.Name, profile.Model)
+				fmt.Println("доступные профили:", strings.Join(profileNames(cfg), ", "))
+				continue
+			}
+			newProfile, newProv, err := switchProfile(cfg, fields[1])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "ошибка:", err)
+				continue
+			}
+			profile, prov = newProfile, newProv
+			session.Provider = prov
+			fmt.Printf("профиль переключён: %s (%s)\n", profile.Name, profile.Model)
 			continue
-		case line == "/src":
+
+		case "/src":
 			src := printer.Sources()
 			if len(src) == 0 {
 				fmt.Println("выдержек в последнем ответе не было")
@@ -115,24 +227,43 @@ func main() {
 				fmt.Println(" ", s)
 			}
 			continue
+
+		case "/again":
+			last := lastUserMessage(session.Messages)
+			if last == "" {
+				fmt.Println("истории нет, нечего повторять")
+				continue
+			}
+			line = last
 		}
 
-		history.Append(chat.Record{Role: "user", Text: line})
+		appendHistory(chat.Record{Role: "user", Text: line})
 		printer.Reset()
 
+		// chapters — главы, накопленные к текущему моменту хода. onChapters
+		// обновляет их сразу после каждого обращения к поиску — раньше, чем
+		// модель напишет первую выдержку, — поэтому к моменту, когда parser
+		// разберёт строку с врезкой, сверка уже видит нужные главы, а не
+		// пустой список.
+		var chapters []corpus.Chapter
 		parser := &render.Parser{}
-		var events []render.Event
-		res, err := session.Turn(context.Background(), line, func(delta string) {
-			events = append(events, parser.Write(delta)...)
-		})
+		res, err := session.Turn(context.Background(), line,
+			func(delta string) {
+				for _, ev := range parser.Write(delta) {
+					printer.Handle(ev, chapters)
+				}
+			},
+			func(cs []corpus.Chapter) {
+				chapters = cs
+			},
+		)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "\nошибка:", err)
 			continue
 		}
-		events = append(events, parser.Flush()...)
-		for _, ev := range events {
-			printer.Handle(ev, res.Chapters)
+		for _, ev := range parser.Flush() {
+			printer.Handle(ev, chapters)
 		}
-		history.Append(chat.Record{Role: "assistant", Text: res.Text})
+		appendHistory(chat.Record{Role: "assistant", Text: res.Text})
 	}
 }

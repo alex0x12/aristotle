@@ -110,7 +110,7 @@ func TestTurnWithoutTools(t *testing.T) {
 	var got strings.Builder
 	res, err := s.Turn(context.Background(), "что такое счастье", func(d string) {
 		got.WriteString(d)
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestTurnRunsToolThenAnswers(t *testing.T) {
 		chapterHit("Nicomachean Ethics I.7", "the good of man is an activity of soul")}}
 	s := &Session{Provider: p, Corpus: f}
 
-	res, err := s.Turn(context.Background(), "что такое счастье", func(string) {})
+	res, err := s.Turn(context.Background(), "что такое счастье", func(string) {}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestToolResultCarriesCite(t *testing.T) {
 	f := &fakeFinder{hits: []corpus.Hit{
 		chapterHit("Nicomachean Ethics I.7", "тело главы")}}
 	s := &Session{Provider: p, Corpus: f}
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Второй запрос должен нести результат инструмента с ссылкой.
@@ -201,7 +201,7 @@ func TestEmptySearchIsReportedNotError(t *testing.T) {
 		{{Kind: provider.EventDone, StopReason: "end_turn"}},
 	}}
 	s := &Session{Provider: p, Corpus: &fakeFinder{}}
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err != nil {
 		t.Fatal(err)
 	}
 	last := p.seen[len(p.seen)-1]
@@ -230,7 +230,7 @@ func TestCeilingStopsLoopAndMarksExhausted(t *testing.T) {
 	f := &fakeFinder{hits: []corpus.Hit{chapterHit("X I.1", "тело")}}
 	s := &Session{Provider: p, Corpus: f}
 
-	res, err := s.Turn(context.Background(), "х", func(string) {})
+	res, err := s.Turn(context.Background(), "х", func(string) {}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestCeilingWithEmptyLastSearchStillMarksExhausted(t *testing.T) {
 	f := &fakeFinder{} // без хитов на всех четырёх обращениях
 	s := &Session{Provider: p, Corpus: f}
 
-	res, err := s.Turn(context.Background(), "х", func(string) {})
+	res, err := s.Turn(context.Background(), "х", func(string) {}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestCeilingOmitsToolFromNextRequest(t *testing.T) {
 	f := &fakeFinder{hits: []corpus.Hit{chapterHit("X I.1", "тело")}}
 	s := &Session{Provider: p, Corpus: f}
 
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(p.seen) != 5 {
@@ -333,7 +333,7 @@ func TestFailedTurnLeavesHistoryUnchanged(t *testing.T) {
 	s := &Session{Provider: p, Corpus: &fakeFinder{}}
 	before := len(s.Messages)
 
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err == nil {
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err == nil {
 		t.Fatal("ожидалась ошибка")
 	}
 	if len(s.Messages) != before {
@@ -350,7 +350,7 @@ func TestFailedStreamLeavesHistoryUnchanged(t *testing.T) {
 	s := &Session{Provider: p, Corpus: &fakeFinder{}}
 	before := len(s.Messages)
 
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err == nil {
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err == nil {
 		t.Fatal("ожидалась ошибка")
 	}
 	if len(s.Messages) != before {
@@ -374,7 +374,7 @@ func TestArgIntConvertsFloat64FromJSON(t *testing.T) {
 	}}
 	f := &capturingFinder{}
 	s := &Session{Provider: p, Corpus: f}
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if f.gotK != 3 {
@@ -407,7 +407,7 @@ func TestSearchFailureCallsOnSearchWarning(t *testing.T) {
 		warnings = append(warnings, msg)
 	}}
 
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(warnings) != 1 {
@@ -434,7 +434,7 @@ func TestSearchFailureWithoutCallbackStillReportsToModel(t *testing.T) {
 	f := &erroringFinder{err: errors.New("коллекция не проиндексирована")}
 	s := &Session{Provider: p, Corpus: f}
 
-	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err != nil {
 		t.Fatal(err)
 	}
 	last := p.seen[len(p.seen)-1]
@@ -447,5 +447,102 @@ func TestSearchFailureWithoutCallbackStillReportsToModel(t *testing.T) {
 	}
 	if !isError || !strings.Contains(content, "поиск не удался") {
 		t.Errorf("модель должна получить текст отказа, получено %q (IsError=%v)", content, isError)
+	}
+}
+
+// TestOnChaptersFiresBeforeTurnReturns закрывает главный дефект финального
+// ревью: печать не должна ждать конца хода. Главы известны раньше, чем
+// модель напишет первую выдержку — сразу после обращения к поиску, — и
+// onChapters обязан сообщить о них в этот момент, а не когда Turn уже вернул
+// управление.
+func TestOnChaptersFiresBeforeTurnReturns(t *testing.T) {
+	p := &scriptedProvider{turns: [][]provider.Event{
+		{
+			{Kind: provider.EventToolCall, Call: provider.ToolCall{
+				ID: "c1", Name: "search_corpus",
+				Input: map[string]any{"query": "happiness"}}},
+			{Kind: provider.EventDone, StopReason: "tool_use"},
+		},
+		{
+			{Kind: provider.EventText, Text: "Благо человека — деятельность души."},
+			{Kind: provider.EventDone, StopReason: "end_turn"},
+		},
+	}}
+	f := &fakeFinder{hits: []corpus.Hit{
+		chapterHit("Nicomachean Ethics I.7", "the good of man is an activity of soul")}}
+	s := &Session{Provider: p, Corpus: f}
+
+	var sawChaptersBeforeText bool
+	var gotChapters []corpus.Chapter
+	res, err := s.Turn(context.Background(), "что такое счастье",
+		func(string) {
+			// К моменту первой текстовой дельты главы обязаны уже быть
+			// известны колбэку — это и есть суть починки.
+			if len(gotChapters) > 0 {
+				sawChaptersBeforeText = true
+			}
+		},
+		func(cs []corpus.Chapter) {
+			gotChapters = cs
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotChapters) != 1 || gotChapters[0].Cite != "Nicomachean Ethics I.7" {
+		t.Fatalf("onChapters получил %+v", gotChapters)
+	}
+	if !sawChaptersBeforeText {
+		t.Error("главы должны быть переданы через onChapters ДО первой текстовой дельты")
+	}
+	if len(res.Chapters) != 1 {
+		t.Errorf("итоговый TurnResult.Chapters = %+v", res.Chapters)
+	}
+}
+
+// TestOnChaptersOptional проверяет, что nil в качестве onChapters не роняет
+// ход — вызывающая сторона (например eval) вправе его не передавать.
+func TestOnChaptersOptional(t *testing.T) {
+	p := &scriptedProvider{turns: [][]provider.Event{
+		{
+			{Kind: provider.EventToolCall, Call: provider.ToolCall{
+				ID: "c1", Name: "search_corpus",
+				Input: map[string]any{"query": "happiness"}}},
+			{Kind: provider.EventDone, StopReason: "tool_use"},
+		},
+		{{Kind: provider.EventDone, StopReason: "end_turn"}},
+	}}
+	f := &fakeFinder{hits: []corpus.Hit{chapterHit("X I.1", "тело")}}
+	s := &Session{Provider: p, Corpus: f}
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestOnSearchStartFiresBeforeEachSearch проверяет, что колбэк о начале
+// поиска срабатывает перед обращением к Corpus.Search — это то, что main.go
+// печатает в stderr, чтобы пользователь видел, что программа не зависла.
+func TestOnSearchStartFiresBeforeEachSearch(t *testing.T) {
+	p := &scriptedProvider{turns: [][]provider.Event{
+		{
+			{Kind: provider.EventToolCall, Call: provider.ToolCall{
+				ID: "c1", Name: "search_corpus",
+				Input: map[string]any{"query": "leisure", "group": "ethics"}}},
+			{Kind: provider.EventDone, StopReason: "tool_use"},
+		},
+		{{Kind: provider.EventDone, StopReason: "end_turn"}},
+	}}
+	f := &fakeFinder{hits: []corpus.Hit{chapterHit("X I.1", "тело")}}
+	var starts []string
+	s := &Session{Provider: p, Corpus: f, OnSearchStart: func(query, group string) {
+		starts = append(starts, query+"|"+group)
+		if f.calls != 0 {
+			t.Error("OnSearchStart должен сработать ДО обращения к поиску")
+		}
+	}}
+	if _, err := s.Turn(context.Background(), "х", func(string) {}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(starts) != 1 || starts[0] != "leisure|ethics" {
+		t.Errorf("starts = %+v", starts)
 	}
 }

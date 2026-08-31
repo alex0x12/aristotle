@@ -55,3 +55,19 @@ func TestRequestDefaultsMaxTokens(t *testing.T) {
 		t.Fatalf("EffectiveMaxTokens = %d", got)
 	}
 }
+
+func TestEffectiveMaxTokensForUsesProfileOverride(t *testing.T) {
+	// Профиль без переопределения — умолчание провайдера.
+	if got := (Request{}).EffectiveMaxTokensFor(0); got != DefaultMaxTokens {
+		t.Fatalf("EffectiveMaxTokensFor(0) = %d, ожидалось %d", got, DefaultMaxTokens)
+	}
+	// Профиль с переопределением — используется потолок профиля.
+	if got := (Request{}).EffectiveMaxTokensFor(4096); got != 4096 {
+		t.Fatalf("EffectiveMaxTokensFor(4096) = %d, ожидалось 4096", got)
+	}
+	// Явный per-запросный MaxTokens побеждает потолок профиля.
+	r := Request{MaxTokens: 500}
+	if got := r.EffectiveMaxTokensFor(4096); got != 500 {
+		t.Fatalf("EffectiveMaxTokensFor с MaxTokens=500 = %d, ожидалось 500", got)
+	}
+}

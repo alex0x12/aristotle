@@ -81,7 +81,7 @@ func runEval(path string, session *chat.Session, searcher *corpus.Searcher,
 		var events []render.Event
 		res, err := fresh.Turn(ctx, q.Ask, func(delta string) {
 			events = append(events, parser.Write(delta)...)
-		})
+		}, nil)
 		if err != nil {
 			fmt.Printf("\n[%s]\n  ОШИБКА: %v\n", q.Ask, err)
 			continue

@@ -187,6 +187,48 @@ func TestLoadReasoningAbsentDoesNotChange(t *testing.T) {
 	}
 }
 
+func TestLoadOverridesMaxOutputTokens(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"profiles":{"openrouter":{"max_output_tokens":4096}}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Profiles["openrouter"].MaxOutputTokens; got != 4096 {
+		t.Fatalf("MaxOutputTokens = %d, ожидалось 4096", got)
+	}
+}
+
+func TestLoadMaxOutputTokensAbsentDoesNotChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"profiles":{"openrouter":{"model":"x"}}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Profiles["openrouter"].MaxOutputTokens; got != 0 {
+		t.Fatalf("MaxOutputTokens = %d, ожидалось 0 (умолчание провайдера)", got)
+	}
+}
+
+func TestBuiltinProfilesHaveNoMaxOutputTokensOverride(t *testing.T) {
+	c := Builtin()
+	for name, p := range c.Profiles {
+		if p.MaxOutputTokens != 0 {
+			t.Errorf("встроенный профиль %q имеет MaxOutputTokens=%d, ожидалось 0 (умолчание)",
+				name, p.MaxOutputTokens)
+		}
+	}
+}
+
 func TestAPIKeyMissing(t *testing.T) {
 	p := Profile{Name: "x", KeyEnv: "ARISTOTLE_TEST_MISSING_KEY"}
 	os.Unsetenv(p.KeyEnv)

@@ -62,7 +62,7 @@ func (a *accumulator) Calls() []provider.ToolCall {
 	return out
 }
 
-func buildBody(model string, reasoning bool, req provider.Request) map[string]any {
+func buildBody(model string, reasoning bool, maxTokens int, req provider.Request) map[string]any {
 	msgs := make([]map[string]any, 0, len(req.Messages)+1)
 	if req.System != "" {
 		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
@@ -97,9 +97,9 @@ func buildBody(model string, reasoning bool, req provider.Request) map[string]an
 		"stream":   true,
 	}
 	if reasoning {
-		body["max_completion_tokens"] = req.EffectiveMaxTokens()
+		body["max_completion_tokens"] = req.EffectiveMaxTokensFor(maxTokens)
 	} else {
-		body["max_tokens"] = req.EffectiveMaxTokens()
+		body["max_tokens"] = req.EffectiveMaxTokensFor(maxTokens)
 	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))
@@ -122,6 +122,7 @@ type client struct {
 	key       string
 	model     string
 	reasoning bool
+	maxTokens int
 	http      *http.Client
 }
 
@@ -135,12 +136,13 @@ func New(p config.Profile) (provider.Provider, error) {
 		key:       key,
 		model:     p.Model,
 		reasoning: p.Reasoning,
+		maxTokens: p.MaxOutputTokens,
 		http:      &http.Client{},
 	}, nil
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (provider.Stream, error) {
-	payload, err := json.Marshal(buildBody(c.model, c.reasoning, req))
+	payload, err := json.Marshal(buildBody(c.model, c.reasoning, c.maxTokens, req))
 	if err != nil {
 		return nil, err
 	}

@@ -45,8 +45,20 @@ type Request struct {
 }
 
 func (r Request) EffectiveMaxTokens() int {
+	return r.EffectiveMaxTokensFor(0)
+}
+
+// EffectiveMaxTokensFor — то же самое, но с учётом потолка вывода профиля.
+// DefaultMaxTokens — факт про Anthropic, а не про всех провайдеров: если у
+// профиля меньший потолок (например, конкретная модель на openrouter), явный
+// per-запросный MaxTokens побеждает, иначе используется потолок профиля
+// (profileMax, 0 значит "не задан"), и только если оба не заданы — умолчание.
+func (r Request) EffectiveMaxTokensFor(profileMax int) int {
 	if r.MaxTokens > 0 {
 		return r.MaxTokens
+	}
+	if profileMax > 0 {
+		return profileMax
 	}
 	return DefaultMaxTokens
 }

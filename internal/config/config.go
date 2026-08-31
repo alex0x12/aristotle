@@ -15,22 +15,33 @@ const (
 
 // Profile описывает один способ достучаться до модели.
 type Profile struct {
-	Name      string `json:"-"`
-	Kind      string `json:"kind,omitempty"`
-	BaseURL   string `json:"base_url,omitempty"`
-	Model     string `json:"model,omitempty"`
-	KeyEnv    string `json:"key_env,omitempty"`
-	Reasoning bool   `json:"reasoning,omitempty"`
+	Name    string `json:"-"`
+	Kind    string `json:"kind,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
+	Model   string `json:"model,omitempty"`
+	KeyEnv  string `json:"key_env,omitempty"`
+	// Reasoning — рассуждающая модель (поддерживает reasoning.effort и не
+	// принимает temperature).
+	Reasoning bool `json:"reasoning,omitempty"`
+	// MaxOutputTokens переопределяет provider.DefaultMaxTokens для этого
+	// профиля. DefaultMaxTokens = 64000 — факт про Anthropic, а не про всех
+	// провайдеров: если профиль указывает на модель с меньшим потолком
+	// вывода (например, конкретную модель на openrouter), каждый запрос
+	// будет отвечать четырёхсотой ошибкой без возможности починить иначе
+	// как правкой кода. 0 значит "не задано" — используется умолчание
+	// провайдера.
+	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
 }
 
 // profileData — внутренний тип для разбора JSON, позволяет различать
-// опущенные поля и явные значения для Reasoning.
+// опущенные поля и явные значения для Reasoning и MaxOutputTokens.
 type profileData struct {
-	Kind      string `json:"kind,omitempty"`
-	BaseURL   string `json:"base_url,omitempty"`
-	Model     string `json:"model,omitempty"`
-	KeyEnv    string `json:"key_env,omitempty"`
-	Reasoning *bool  `json:"reasoning,omitempty"`
+	Kind            string `json:"kind,omitempty"`
+	BaseURL         string `json:"base_url,omitempty"`
+	Model           string `json:"model,omitempty"`
+	KeyEnv          string `json:"key_env,omitempty"`
+	Reasoning       *bool  `json:"reasoning,omitempty"`
+	MaxOutputTokens *int   `json:"max_output_tokens,omitempty"`
 }
 
 type Config struct {
@@ -106,6 +117,9 @@ func Load(path string) (Config, error) {
 			if pd.Reasoning != nil {
 				cur.Reasoning = *pd.Reasoning
 			}
+			if pd.MaxOutputTokens != nil {
+				cur.MaxOutputTokens = *pd.MaxOutputTokens
+			}
 			base.Profiles[name] = cur
 			continue
 		}
@@ -124,6 +138,9 @@ func Load(path string) (Config, error) {
 		}
 		if pd.Reasoning != nil {
 			cur.Reasoning = *pd.Reasoning
+		}
+		if pd.MaxOutputTokens != nil {
+			cur.MaxOutputTokens = *pd.MaxOutputTokens
 		}
 		base.Profiles[name] = cur
 	}
