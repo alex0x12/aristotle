@@ -1260,50 +1260,68 @@ git commit -m "Запись корпуса в markdown по главам и сб
 
 ## Task 5: Разбор Wikisource
 
-Wikisource теперь несёт **13 работ**: девять переехали в задаче 3 (семь с 404
-на MIT, «О добродетелях и пороках» без текстовой версии, «Политика» в обрезанной
-гугл-обёртке) и четыре добавляются здесь — их на MIT нет вовсе.
+Wikisource несёт **10 работ**: девять переехали в задаче 3 (семь с 404 на MIT,
+«О добродетелях и пороках» без текстовой версии, «Политика» в обрезанной
+гугл-обёртке) и одна добавляется здесь — «О возникновении животных», которой
+на MIT нет, а сноска `[факт]` из спеки 5.3 на неё опирается.
 
-Строение проверено через API 31 августа 2026, и оно неоднородно:
+Итог по корпусу: **30 работ**, 20 с MIT и 10 с Wikisource.
+
+**Три работы выброшены сознательно** — их текст на Wikisource недостижим,
+проверено 31 августа 2026:
+
+- «Евдемова этика» — трансклюзия Proofread-Page. И корневая страница, и все
+  подстраницы (`Book 1, 2, 3, 7`) в сыром вики-тексте содержат только
+  `<pages index="Works of Aristotle v9 (ed. Ross).djvu" from=425 to=437 />`;
+  263 байта шаблона, текста ноль;
+- «О растениях» — то же самое, 663 байта;
+- «Проблемы» — страницы нет: имя `Problems` оказалось редиректом на
+  стихотворение Эмили Дикинсон, поиск другого варианта ничего не дал.
+
+Достать их можно было бы только через отрисованный HTML, то есть заведя в
+конвейер разбор HTML, от которого мы отказались. Способность отвечать «этого
+я не писал» сохраняется: её несёт «О добродетелях и пороках», доступная свободно.
+
+Строение Wikisource проверено через API и оно неоднородно:
 
 - **подстраницы перечисляются запросом**, а не строятся по шаблону:
   `action=query&list=allpages&apprefix=<Страница>/`. У «Политики (Эллис)» это
-  `Book 1`…`Book 8`, у «О возникновении животных» — `Book I`…`Book V`
-  (римские), у «Евдемовой этики» — `Book 1, 2, 3, 7` с дырами;
-- **среди подстраниц есть не-аристотелевские**: `Politics (Ellis)/Introduction`,
-  `Nicomachean Ethics/Notes`. Берутся только книгоподобные;
+  `Book 1`…`Book 8`, у «О возникновении животных» — `Book I`…`Book V` (римские);
+- **среди подстраниц есть не-аристотелевские**: `Politics (Ellis)/Introduction`.
+  Берутся только книгоподобные;
 - **у многих работ подстраниц нет вовсе** — весь текст на одной странице;
-- сырой wikitext: `https://en.wikisource.org/w/index.php?title=<Страница>&action=raw`;
-- в начале — шаблон `{{header … | translator = … | section = Book I … }}`,
-  метка книги обёрнута в три апострофа;
-- **граница главы — заголовок второго уровня, любой.** У одних работ это
-  `== Part 1 ==`, у «О движении животных» — `== 1 ==`. Номер бывает арабским
-  и римским. Работа без заголовков второго уровня — одна глава целиком;
-- абзацы разделены пустой строкой и **не** переносятся жёстко: склеивать
-  строки не нужно.
+- сырой вики-текст: `https://en.wikisource.org/w/index.php?title=<Страница>&action=raw`;
+- **уровень заголовка главы разный у разных работ.** У «Политики (Эллис)»
+  глава — заголовок **третьего** уровня (`=== CHAPTER I ===`), а второй уровень
+  занят книгой (`== BOOK I ==`). У «О движении животных» глава — второй уровень
+  (`== 1 ==`). У прочих — `== Part N ==`. Поэтому уровень определяется
+  по данным: **глава размечена тем уровнем заголовков, которого на странице
+  больше всего**;
+- номер главы бывает арабским и римским; работа без заголовков — одна глава;
+- абзацы разделены пустой строкой и **не** переносятся жёстко.
 
-Три короткие работы на Wikisource идут без деления на главы:
+Три короткие работы идут без деления на главы и станут одной главой каждая:
 `On the Progression of Animals`, `On Dreams (Aristotle)`, `Virtues and Vices`.
-Каждая станет одной главой. Это приемлемо: трактаты короткие, а деления
-на MIT для них всё равно нет.
 
 **Файлы:**
 - Создать: `build/parse_ws.py`
 - Тест: `build/tests/test_parse_ws.py`
-- Изменить: `build/works.yaml` (четыре новые работы)
+- Изменить: `build/works.yaml` (одна новая работа)
 - Изменить: `build/tests/test_registry.py` (счётчики)
 - Изменить: `build/build.py` (ветвление по источнику)
 
 **Интерфейсы:**
-- Потребляет: `parse_mit.Chapter`, `parse_mit.ParseError`, `parse_mit.roman_to_int`
-  (тип главы и разбор римских чисел общие для обоих источников).
+- Потребляет: `parse_mit.Chapter`, `parse_mit.ParseError`, `parse_mit.roman_to_int`.
 - Отдаёт:
-  - `parse_ws.page_title(url: str) -> str` — `…/wiki/Politics_(Ellis)` → `Politics (Ellis)`;
-  - `parse_ws.book_subpages(title: str, get) -> list[tuple[str, str]]` — пары
-    (имя подстраницы, метка книги), только книгоподобные, по возрастанию номера;
+  - `parse_ws.page_title(url: str) -> str`;
+  - `parse_ws.book_subpages(title: str, get) -> list[tuple[str, str]]`;
+  - `parse_ws.chapter_level(raw: str) -> int | None` — самый частый уровень
+    заголовков, либо `None`, если заголовков нет;
+  - `parse_ws.clean_wikitext(text: str) -> str`;
+  - `parse_ws.check_usable(raw: str, page: str) -> None` — поднимает `ParseError`
+    на трансклюзии и редиректе;
   - `parse_ws.parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]`;
-  - `parse_ws.parse_work(work, get) -> tuple[str | None, list[Chapter]]` —
-    по смыслу совместим с `parse_mit.parse`, но ходит в сеть через `get(url) -> str`.
+  - `parse_ws.parse_work(work, get) -> tuple[str | None, list[Chapter]]`.
 
 - [ ] **Шаг 1: Написать падающие тесты**
 
@@ -1312,18 +1330,15 @@ Wikisource теперь несёт **13 работ**: девять переех�
 import json
 import pytest
 from parse_mit import ParseError
-from parse_ws import book_subpages, page_title, parse_page
+from parse_ws import (book_subpages, chapter_level, check_usable,
+                      clean_wikitext, page_title, parse_page)
 
-APOS = "'" * 3  # три апострофа: жирный в wikitext
+APOS = "'" * 3
 
-PAGE = f"""{{{{header
- | title      = [[../]]
- | author     = Aristotle
+PART_PAGE = f"""{{{{header
  | translator = Arthur Platt
  | section    = {APOS}Book I{APOS}
- | next       = [[../Book II|Book II]]
 }}}}
-
 
 == Part 1 ==
 
@@ -1334,6 +1349,27 @@ There are four causes underlying everything.
 == Part 2 ==
 
 Now the female is as it were a deformed male.
+"""
+
+# «Политика (Эллис)»: книга — второй уровень, глава — третий.
+NESTED_PAGE = """{{header
+ | translator = William Ellis
+ | section  = Book 1
+}}
+
+== BOOK I ==
+
+=== CHAPTER I ===
+
+Every state is a community of some kind.
+
+=== CHAPTER II ===
+
+He who thus considers things in their first growth.
+
+=== CHAPTER III ===
+
+Seeing then that the state is made up of households.
 """
 
 BARE_HEADINGS = """{{header
@@ -1364,14 +1400,28 @@ def test_page_title_from_url():
     assert page_title("https://en.wikisource.org/wiki/On_Dreams_(Aristotle)") == "On Dreams (Aristotle)"
 
 
-def test_parse_page_header_and_chapters():
-    translator, chapters = parse_page(PAGE, "I")
+def test_chapter_level_picks_most_frequent():
+    assert chapter_level(PART_PAGE) == 2
+    assert chapter_level(NESTED_PAGE) == 3, "у Политики глав больше, чем книг"
+    assert chapter_level(BARE_HEADINGS) == 2
+    assert chapter_level(NO_HEADINGS) is None
+
+
+def test_parse_page_part_style():
+    translator, chapters = parse_page(PART_PAGE, "I")
     assert translator == "Arthur Platt"
     assert [c.number for c in chapters] == [1, 2]
     assert all(c.book == "I" for c in chapters)
     assert chapters[0].text.startswith("WE have now discussed")
-    assert "\n\n" in chapters[0].text, "два абзаца должны сохраниться"
-    assert chapters[1].text == "Now the female is as it were a deformed male."
+    assert "\n\n" in chapters[0].text
+
+
+def test_nested_headings_book_line_is_not_a_chapter():
+    _, chapters = parse_page(NESTED_PAGE, "I")
+    assert [c.number for c in chapters] == [1, 2, 3], \
+        "строка BOOK I главой быть не должна"
+    assert chapters[0].text == "Every state is a community of some kind."
+    assert "BOOK" not in "\n".join(c.text for c in chapters)
 
 
 def test_bare_numeric_headings_are_chapters():
@@ -1388,18 +1438,38 @@ def test_page_without_headings_is_one_chapter():
     assert "Второй абзац." in chapters[0].text
 
 
-def test_parse_page_strips_wiki_markup():
-    raw = ("{{header | translator = X }}\n\n== Part 1 ==\n\n"
-           f"см. [[Physics|Физику]] и {APOS}важное{APOS}\n")
-    _, chapters = parse_page(raw, None)
-    assert "[[" not in chapters[0].text
-    assert APOS not in chapters[0].text
-    assert "Физику" in chapters[0].text
+def test_clean_strips_nested_templates():
+    src = "{{translation license|original={{PD-old}}|translation={{PD-1923}}}} текст"
+    assert clean_wikitext(src).strip() == "текст"
 
 
-def test_parse_page_rejects_empty_body():
-    with pytest.raises(ParseError, match="пуст"):
-        parse_page("{{header | translator = X }}\n\n", None)
+def test_clean_strips_refs_and_categories():
+    src = ("текст<ref>сноска с [[ссылкой]]</ref> дальше\n"
+           "[[Category:Aristotle]]\n[[fr:Politique]]\n")
+    out = clean_wikitext(src)
+    assert "сноска" not in out
+    assert "Category" not in out
+    assert "fr:" not in out
+    assert "текст дальше" in out
+
+
+def test_clean_keeps_link_text():
+    assert clean_wikitext("см. [[Physics|Физику]] и [[Topics]]") == "см. Физику и Topics"
+
+
+def test_check_usable_rejects_transclusion():
+    raw = '{{header}}\n<pages index="Works of Aristotle v9.djvu" from=425 to=437 />'
+    with pytest.raises(ParseError, match="трансклюзи"):
+        check_usable(raw, "Eudemian Ethics")
+
+
+def test_check_usable_rejects_redirect():
+    with pytest.raises(ParseError, match="редирект"):
+        check_usable("#redirect [[Bring me the sunset in a cup]]", "Problems")
+
+
+def test_check_usable_accepts_normal_page():
+    check_usable(PART_PAGE, "On the Generation of Animals/Book I")
 
 
 def test_book_subpages_filters_non_books_and_sorts():
@@ -1416,7 +1486,7 @@ def test_book_subpages_filters_non_books_and_sorts():
         "Politics (Ellis)/Book 1",
         "Politics (Ellis)/Book 2",
         "Politics (Ellis)/Book 10",
-    ], "введение отброшено, порядок числовой а не лексикографический"
+    ]
     assert [book for _, book in pages] == ["I", "II", "X"]
 
 
@@ -1427,8 +1497,7 @@ def test_book_subpages_accepts_roman():
             {"title": "On the Generation of Animals/Book I"},
         ]}})
 
-    pages = book_subpages("On the Generation of Animals", fake_get)
-    assert [book for _, book in pages] == ["I", "II"]
+    assert [b for _, b in book_subpages("On the Generation of Animals", fake_get)] == ["I", "II"]
 
 
 def test_book_subpages_empty_when_no_subpages():
@@ -1456,15 +1525,19 @@ from parse_mit import Chapter, ParseError, roman_to_int
 
 API = "https://en.wikisource.org/w/api.php"
 RAW = "https://en.wikisource.org/w/index.php"
-DELAY = 1.0  # пауза между обращениями: API отвечает 429 на частые запросы
+DELAY = 1.0  # API отвечает 429 на частые запросы
 
 TRANSLATOR_RE = re.compile(r"^\s*\|\s*translator\s*=\s*(.+?)\s*$", re.M)
-HEADING_RE = re.compile(r"^==\s*(.+?)\s*==\s*$")
+HEADING_RE = re.compile(r"^(=+)\s*(.+?)\s*=+\s*$")
 NUMBER_RE = re.compile(r"(\d+|[IVXLC]+)\s*$")
 BOOK_SUB_RE = re.compile(r"/Book\s+(\d+|[IVXLC]+)\s*$", re.I)
+REF_RE = re.compile(r"<ref[^>]*>.*?</ref>|<ref[^>]*/>", re.S | re.I)
+TAG_RE = re.compile(r"</?[a-z][^>]*>", re.I)
+DROP_LINK_RE = re.compile(r"\[\[(?:Category|File|Image|[a-z]{2,3}):[^\]]*\]\]", re.I)
 LINK_RE = re.compile(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]")
-TEMPLATE_RE = re.compile(r"\{\{[^{}]*\}\}")
-BOLD_RE = re.compile(r"'{2,3}")
+BOLD_RE = re.compile(r"'{2,}")
+TRANSCLUSION_RE = re.compile(r"<pages\b", re.I)
+REDIRECT_RE = re.compile(r"^\s*#redirect", re.I)
 
 ROMAN_OUT = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
              "XI", "XII", "XIII", "XIV", "XV"]
@@ -1478,14 +1551,56 @@ def _to_int(token: str) -> int:
     return int(token) if token.isdigit() else roman_to_int(token)
 
 
-def book_subpages(title: str, get) -> list[tuple[str, str]]:
-    """Книгоподобные подстраницы по возрастанию номера.
+def check_usable(raw: str, page: str) -> None:
+    """Отвергает страницы, из которых текст не достать.
 
-    Имена подстраниц у разных работ разные — `Book 1` и `Book I`, — а среди них
-    попадаются чужие: Introduction, Notes. Поэтому список запрашивается,
-    фильтруется и сортируется по числовому значению, а не лексикографически:
-    иначе `Book 10` встанет между `Book 1` и `Book 2`.
+    Обе формы отдают правдоподобный ответ с кодом 200, и без этой проверки
+    в корпус попадут главы, состоящие из шаблона вместо слов Аристотеля.
     """
+    if REDIRECT_RE.match(raw):
+        raise ParseError(f"{page}: страница — редирект, а не текст")
+    if TRANSCLUSION_RE.search(raw):
+        raise ParseError(
+            f"{page}: текст лежит трансклюзией Proofread-Page, "
+            f"в сыром вики-тексте его нет")
+
+
+def _strip_templates(text: str) -> str:
+    """Снимает шаблоны, в том числе вложенные, изнутри наружу."""
+    pattern = re.compile(r"\{\{[^{}]*\}\}")
+    while True:
+        text, count = pattern.subn("", text)
+        if not count:
+            return text
+
+
+def clean_wikitext(text: str) -> str:
+    text = REF_RE.sub("", text)
+    text = _strip_templates(text)
+    text = DROP_LINK_RE.sub("", text)
+    text = LINK_RE.sub(r"\1", text)
+    text = TAG_RE.sub("", text)
+    return BOLD_RE.sub("", text)
+
+
+def chapter_level(raw: str) -> int | None:
+    """Уровень заголовка, которым размечены главы.
+
+    У разных работ он разный: у «Политики» глава — третий уровень, а второй
+    занят книгой. Берём тот уровень, которого на странице больше всего.
+    """
+    counts: dict[int, int] = {}
+    for line in raw.splitlines():
+        match = HEADING_RE.match(line)
+        if match:
+            level = len(match.group(1))
+            counts[level] = counts.get(level, 0) + 1
+    if not counts:
+        return None
+    return max(counts, key=lambda level: (counts[level], -level))
+
+
+def book_subpages(title: str, get) -> list[tuple[str, str]]:
     url = (f"{API}?action=query&list=allpages"
            f"&apprefix={quote(title + '/')}&aplimit=200&format=json")
     data = json.loads(get(url))
@@ -1498,14 +1613,8 @@ def book_subpages(title: str, get) -> list[tuple[str, str]]:
     return [(name, ROMAN_OUT[number]) for number, name in found]
 
 
-def _strip_markup(text: str) -> str:
-    text = TEMPLATE_RE.sub("", text)
-    text = LINK_RE.sub(r"\1", text)
-    return BOLD_RE.sub("", text)
-
-
 def _reflow(lines: list[str]) -> str:
-    body = _strip_markup("\n".join(lines)).strip()
+    body = clean_wikitext("\n".join(lines)).strip()
     return re.sub(r"\n{3,}", "\n\n", body)
 
 
@@ -1513,6 +1622,7 @@ def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
     match = TRANSLATOR_RE.search(raw)
     translator = match.group(1) if match else None
 
+    level = chapter_level(raw)
     lines = raw.splitlines()
     chapters: list[Chapter] = []
     number: int | None = None
@@ -1525,8 +1635,10 @@ def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
     for line in lines:
         heading = HEADING_RE.match(line)
         if heading:
+            if len(heading.group(1)) != level:
+                continue  # заголовок другого уровня — не граница главы
             flush()
-            found = NUMBER_RE.search(heading.group(1))
+            found = NUMBER_RE.search(heading.group(2))
             number = _to_int(found.group(1)) if found else len(chapters) + 1
             buf = []
             continue
@@ -1535,7 +1647,6 @@ def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
     flush()
 
     if not chapters:
-        # Работа без заголовков второго уровня — одна глава целиком.
         body = _reflow(lines)
         if not body:
             raise ParseError("страница пуста: ни заголовков, ни текста")
@@ -1555,8 +1666,9 @@ def parse_work(work, get) -> tuple[str | None, list[Chapter]]:
     for index, (name, book) in enumerate(targets):
         if index:
             time.sleep(DELAY)
-        url = f"{RAW}?title={quote(name)}&action=raw"
-        found, page_chapters = parse_page(get(url), book)
+        raw = get(f"{RAW}?title={quote(name)}&action=raw")
+        check_usable(raw, name)
+        found, page_chapters = parse_page(raw, book)
         translator = translator or found
         chapters.extend(page_chapters)
 
@@ -1568,9 +1680,9 @@ def parse_work(work, get) -> tuple[str | None, list[Chapter]]:
 - [ ] **Шаг 4: Запустить тесты, убедиться что проходят**
 
 Выполнить: `cd build && python -m pytest tests/test_parse_ws.py -v`
-Ожидается: PASS, 9 тестов.
+Ожидается: PASS, 15 тестов.
 
-- [ ] **Шаг 5: Добавить четыре работы, которых нет на MIT**
+- [ ] **Шаг 5: Добавить работу, которой нет на MIT**
 
 Дописать в `build/works.yaml`:
 
@@ -1582,38 +1694,19 @@ generation-of-animals:
   source: wikisource
   url: https://en.wikisource.org/wiki/On_the_Generation_of_Animals
   translator: Arthur Platt
-eudemian-ethics:
-  title: Eudemian Ethics
-  group: ethics
-  authenticity: genuine
-  source: wikisource
-  url: https://en.wikisource.org/wiki/Eudemian_Ethics
-problems:
-  title: Problems
-  group: biology
-  authenticity: spurious
-  source: wikisource
-  url: https://en.wikisource.org/wiki/Problems
-on-plants:
-  title: On Plants
-  group: biology
-  authenticity: spurious
-  source: wikisource
-  url: https://en.wikisource.org/wiki/On_Plants
 ```
 
 Обновить счётчики в `build/tests/test_registry.py`:
 
 ```python
-    assert len(works) == 33
+    assert len(works) == 30
     mit = [w for w in works.values() if w.source == "mit"]
     ws = [w for w in works.values() if w.source == "wikisource"]
     assert len(mit) == 20
-    assert len(ws) == 13
+    assert len(ws) == 10
+    assert all(w.url.endswith(".mb.txt") for w in mit)
+    assert all(w.translator for w in ws), "у работ Wikisource переводчик задан явно"
 ```
-
-Проверку `assert all(w.translator for w in ws)` **убрать**: у трёх новых работ
-переводчик берётся из шапки страницы, а не задаётся в реестре.
 
 - [ ] **Шаг 6: Подключить парсер в оркестровку**
 
@@ -1634,33 +1727,40 @@ def _chapters(work, get):
 `translator, chapters = _chapters(work, get)`. Прежнюю строку с `PARSERS.get(...)`
 и её проверку удалить.
 
-Внимание: `fetch.fetch` отвергает не-https и распознаёт HTML-подмену. Ответ
-Wikisource `action=raw` — это чистый wikitext, а ответ API — JSON, так что ни
-та ни другая проверка ложно не срабатывает. Кэш `fetch` заодно снимает
-проблему лимита запросов при повторных сборках.
+- [ ] **Шаг 7: Пересобрать корпус целиком**
 
-- [ ] **Шаг 7: Пересобрать корпус и проверить добор**
+Пересборка обязательна: корпус на диске несёт 137 глав «Метафизики»
+с испорченным началом — дефект уже исправлен в парсере, но файлы не
+обновлялись.
 
 ```bash
 cd build && python build.py --force
-ls ../corpus/generation-of-animals/ ../corpus/politics/
-grep -rl "deformed male" ../corpus/generation-of-animals/ | head -3
 find ../corpus -name '*.md' | wc -l
+ls ../corpus/politics/ ../corpus/generation-of-animals/
 ```
 
-Ожидается: у «О возникновении животных» каталоги `i`…`v`, у «Политики» —
-`i`…`viii` (перевод Эллиса полон, все восемь книг); найдено место про
-«deformed male», на которое опирается пример сноски `[факт]` в спеке 5.3.
+Ожидается: у «Политики» каталоги `i`…`viii`, у «О возникновении животных» —
+`i`…`v`. Если у «Политики» книг меньше восьми — остановиться и сказать.
 
-Если какая-то работа даёт ноль глав — открыть её страницу руками и посмотреть
-разметку, не подгоняя регулярку вслепую.
+- [ ] **Шаг 8: Три проверки корпуса**
 
-- [ ] **Шаг 8: Коммит**
+```bash
+cd /Development/aristotle
+grep -rlE '^" *"' corpus/ | wc -l                    # ждём 0
+grep -rnE '^[[:punct:]]$' corpus/ | wc -l            # ждём 0
+grep -rn 'pages index\|#redirect\|Category:' corpus/ | wc -l   # ждём 0
+grep -rl "Internet Classics Archive" corpus/ | wc -l # ждём 0
+```
+
+Все четыре должны дать ноль. Любое ненулевое — дефект разбора, чинить
+в парсере, а не вычищать корпус руками.
+
+- [ ] **Шаг 9: Коммит**
 
 ```bash
 git add build/parse_ws.py build/tests/test_parse_ws.py build/works.yaml \
         build/build.py build/tests/test_registry.py corpus/
-git commit -m "Разбор Wikisource по заголовкам и добор тринадцати работ"
+git commit -m "Разбор Wikisource и сборка корпуса из тридцати работ"
 ```
 
 ---
@@ -1790,7 +1890,7 @@ print("SOURCES.md записан")
 - [ ] **Шаг 6: Пересобрать и прочитать SOURCES.md глазами**
 
 Выполнить: `cd build && python build.py --force && head -40 ../SOURCES.md`
-Ожидается: таблица из 33 строк, у каждой указан переводчик. Прочерк в колонке
+Ожидается: таблица из 30 строк, у каждой указан переводчик. Прочерк в колонке
 переводчика означает, что парсер его не нашёл — вписать вручную
 в `works.yaml` полем `translator`, это законное применение реестра.
 
