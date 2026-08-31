@@ -54,21 +54,39 @@ def _merge_stray_symbols(paragraphs: list[str]) -> list[str]:
     # осиротевшую кавычку на отдельной строке между двумя пустыми (не
     # только в строке-маркере главы, но и внутри самого тела текста —
     # например, в metaphysics она стоит отдельной строкой перед первым
-    # абзацем каждой книги, начиная со второй). Приклеиваем такой
-    # фрагмент к началу следующего абзаца, восстанавливая исходный текст,
-    # а не оставляем самостоятельным "абзацем" из одного символа.
+    # абзацем каждой книги, начиная со второй).
+    #
+    # У такого огрызка два разных происхождения, и с ними нужно поступать
+    # по-разному:
+    #   - огрызок дублирует первый символ следующего абзаца (то есть это
+    #     одна и та же кавычка, продублированная разметкой источника,
+    #     как в metaphysics: "Part 2 \"" перед абзацем "\"Since we are
+    #     seeking...") — тогда огрызок отбрасывается целиком, иначе
+    #     склейка дала бы двойной символ в начале главы;
+    #   - огрызок не совпадает с началом следующего абзаца (настоящий,
+    #     не продублированный фрагмент) — тогда прежнее поведение:
+    #     приклеиваем его к началу следующего абзаца.
     merged: list[str] = []
-    pending: str | None = None
-    for paragraph in paragraphs:
-        if pending is not None:
-            paragraph = pending + " " + paragraph
-            pending = None
+    i = 0
+    n = len(paragraphs)
+    while i < n:
+        paragraph = paragraphs[i]
         if _is_punctuation_scrap(paragraph):
-            pending = paragraph
-            continue
+            scrap = paragraph.strip()
+            nxt = paragraphs[i + 1] if i + 1 < n else None
+            if nxt is not None:
+                if nxt.startswith(scrap):
+                    # Дубль — выбрасываем огрызок, следующий абзац и так
+                    # начинается с того же символа.
+                    i += 1
+                    continue
+                merged.append(scrap + " " + nxt)
+                i += 2
+                continue
+            # Огрызок в самом конце текста — приклеить не к чему, но и
+            # выбрасывать без доказанного дубля не стоит.
         merged.append(paragraph)
-    if pending is not None:
-        merged.append(pending)
+        i += 1
     return merged
 
 

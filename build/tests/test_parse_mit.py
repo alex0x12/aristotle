@@ -113,11 +113,13 @@ def test_glued_part_marker_returns_remainder_as_chapter_text():
     )
 
 
-def test_glued_marker_symbol_does_not_become_its_own_paragraph():
+def test_glued_marker_duplicate_symbol_is_dropped_not_glued():
     # Как в metaphysics: маркер склеен с одиночным символом-кавычкой
-    # ("Part 2 \""), а настоящий абзац отделён от него пустой строкой.
-    # Кавычка не должна стать отдельным "абзацем" из одного знака —
-    # она приклеивается к началу первого непустого текста после неё.
+    # ("Part 2 \""), а настоящий абзац отделён от него пустой строкой и
+    # сам начинается с той же кавычки — это одна и та же кавычка,
+    # продублированная разметкой источника. Огрызок отбрасывается
+    # целиком: приклеить его означало бы получить двойную кавычку
+    # в начале главы.
     raw = (
         "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
         "\n\nPart 1 \n\nfirst chapter\n\n"
@@ -128,19 +130,19 @@ def test_glued_marker_symbol_does_not_become_its_own_paragraph():
     )
     _, chapters = parse(raw)
     assert chapters[1].number == 2
-    paragraphs = chapters[1].text.split("\n\n")
-    assert not any(len(p.strip()) <= 1 for p in paragraphs), \
-        "ни один абзац не должен состоять из одного знака препинания"
-    assert paragraphs[0].startswith('" "Since we are seeking this knowledge')
+    assert chapters[1].text == (
+        '"Since we are seeking this knowledge, we must inquire of what kind '
+        'are the causes and the principles.'
+    )
 
 
-def test_standalone_stray_symbol_line_merges_into_next_paragraph():
+def test_standalone_stray_symbol_duplicate_is_dropped():
     # Живая находка при перепроверке metaphysics: осиротевшая кавычка не
     # всегда приклеена к маркеру — иногда это отдельная строка "Part 1"
     # (чистая, без хвоста), пустая строка, отдельная строка из одной
-    # кавычки, снова пустая строка, и только потом настоящий абзац. Это
-    # уже не про склейку маркера, а про тело главы вообще — чинится общим
-    # правилом в _reflow, а не только для строки-открывашки.
+    # кавычки, снова пустая строка, и только потом настоящий абзац,
+    # начинающийся с той же кавычки. Это тоже дубль — огрызок
+    # отбрасывается, а не приклеивается.
     raw = (
         "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
         "\n\nPart 1 \n\n\"\n\n"
@@ -150,11 +152,27 @@ def test_standalone_stray_symbol_line_merges_into_next_paragraph():
     )
     _, chapters = parse(raw)
     assert chapters[0].number == 1
-    paragraphs = chapters[0].text.split("\n\n")
-    assert not any(len(p.strip()) <= 1 for p in paragraphs), \
-        "ни один абзац не должен состоять из одного знака препинания"
-    assert paragraphs[0].startswith(
-        '" "The investigation of the truth is hard in one way'
+    assert chapters[0].text == (
+        '"The investigation of the truth is hard in one way, easy in another. '
+        'An indication of this is found in the fact that no one attains it.'
+    )
+
+
+def test_punctuation_scrap_that_is_not_a_duplicate_is_still_glued():
+    # Страховка на будущее (Wikisource, задача 5), а не описание текущих
+    # данных корпуса: если огрызок — не дубль первого символа следующего
+    # абзаца, прежнее поведение (склейка) сохраняется, а не отбрасывается.
+    raw = (
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nPart 1 \n\nfirst chapter\n\n"
+        "Part 2 »\n\n"
+        "Some text continues the paragraph after the guillemet.\n\n"
+        "Part 3 \n\nthird chapter\n\nTHE END\n"
+    )
+    _, chapters = parse(raw)
+    assert chapters[1].number == 2
+    assert chapters[1].text == (
+        "» Some text continues the paragraph after the guillemet."
     )
 
 
