@@ -84,8 +84,8 @@ func Load(path string) (Config, error) {
 
 	// Разбираем в промежуточный тип, чтобы различать опущенные поля и явные значения.
 	var over struct {
-		Default  string                  `json:"default,omitempty"`
-		Profiles map[string]profileData  `json:"profiles,omitempty"`
+		Default  string                 `json:"default,omitempty"`
+		Profiles map[string]profileData `json:"profiles,omitempty"`
 	}
 	if err := json.Unmarshal(data, &over); err != nil {
 		return base, fmt.Errorf("конфиг %s: %w", path, err)
