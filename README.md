@@ -54,7 +54,7 @@ cd build && python -m pytest tests/ -v
 кода репозитория, в общем индексе qmd:
 
 ```bash
-qmd collection add aristotle /path/to/aristotle/corpus --pattern '**/*.md'
+qmd collection add /path/to/aristotle/corpus --name aristotle --pattern '**/*.md'
 qmd context add qmd://aristotle/ "Полный корпус Аристотеля по-английски, один файл на главу, с полями authenticity и group во frontmatter"
 qmd embed -c aristotle
 qmd status
