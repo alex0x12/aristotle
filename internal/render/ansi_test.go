@@ -1,12 +1,13 @@
-// internal/render/ansi_test.go
 package render
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/alex0x12/aristotle/internal/corpus"
 )
 
-func printed(evs []Event, chapters []string) (string, *Printer) {
+func printed(evs []Event, chapters []corpus.Chapter) (string, *Printer) {
 	var b strings.Builder
 	p := &Printer{Out: &b, Color: false}
 	for _, e := range evs {
@@ -23,7 +24,10 @@ func TestProsePrintedAsIs(t *testing.T) {
 }
 
 func TestVerifiedQuoteHasNoWarning(t *testing.T) {
-	chapters := []string{"the good of man is an activity of soul in accordance with virtue"}
+	chapters := []corpus.Chapter{{
+		Cite: "Nicomachean Ethics I.7",
+		Text: "the good of man is an activity of soul in accordance with virtue",
+	}}
 	out, _ := printed([]Event{
 		{Kind: Cite, Text: "Nicomachean Ethics I.7"},
 		{Kind: En, Text: "an activity of soul in accordance with virtue"},
@@ -41,7 +45,10 @@ func TestVerifiedQuoteHasNoWarning(t *testing.T) {
 }
 
 func TestFabricatedQuoteIsFlagged(t *testing.T) {
-	chapters := []string{"the good of man is an activity of soul"}
+	chapters := []corpus.Chapter{{
+		Cite: "Nicomachean Ethics I.7",
+		Text: "the good of man is an activity of soul",
+	}}
 	out, _ := printed([]Event{
 		{Kind: Cite, Text: "Nicomachean Ethics I.7"},
 		{Kind: En, Text: "happiness is the reward of contemplating the stars"},
@@ -53,7 +60,7 @@ func TestFabricatedQuoteIsFlagged(t *testing.T) {
 }
 
 func TestEnglishLineIsNotPrintedButCollected(t *testing.T) {
-	chapters := []string{"an activity of soul"}
+	chapters := []corpus.Chapter{{Cite: "NE I.7", Text: "an activity of soul"}}
 	out, p := printed([]Event{
 		{Kind: Cite, Text: "NE I.7"},
 		{Kind: En, Text: "an activity of soul"},
@@ -82,7 +89,7 @@ func TestNoteKindsAreLabelled(t *testing.T) {
 }
 
 func TestOutputHasNoEmoji(t *testing.T) {
-	chapters := []string{"текст"}
+	chapters := []corpus.Chapter{{Cite: "NE I.7", Text: "текст"}}
 	out, _ := printed([]Event{
 		{Kind: Cite, Text: "NE I.7"},
 		{Kind: En, Text: "выдумка"},
@@ -97,9 +104,92 @@ func TestOutputHasNoEmoji(t *testing.T) {
 }
 
 func TestResetClearsSources(t *testing.T) {
-	_, p := printed([]Event{{Kind: En, Text: "x"}}, []string{"x"})
+	_, p := printed([]Event{{Kind: En, Text: "x"}}, []corpus.Chapter{{Cite: "x", Text: "x"}})
 	p.Reset()
 	if len(p.Sources()) != 0 {
 		t.Fatal("Reset должен очищать накопленные оригиналы")
+	}
+}
+
+// TestQuoteUnderWrongCiteIsFlagged закрывает дефект итогового ревью: текст
+// реально лежит в одной из пришедших глав, но модель подписала его ссылкой
+// на ДРУГУЮ главу из того же пула. Раньше renderHits выбрасывал связь
+// текста с главой (собирал только c.Text), и Verify спрашивал лишь "есть ли
+// эта строка хоть в какой-нибудь из глав" — такая подмена проходила молча.
+func TestQuoteUnderWrongCiteIsFlagged(t *testing.T) {
+	chapters := []corpus.Chapter{
+		{Cite: "Nicomachean Ethics I.7", Text: "an activity of soul in accordance with virtue"},
+		{Cite: "Politics I.2", Text: "man is by nature a political animal"},
+	}
+	out, _ := printed([]Event{
+		{Kind: Cite, Text: "Politics I.2"}, // ссылка чужая: текст на самом деле из НЭ I.7
+		{Kind: En, Text: "an activity of soul in accordance with virtue"},
+		{Kind: Ru, Text: "деятельность души сообразно добродетели"},
+	}, chapters)
+	if !strings.Contains(out, "[!] нет в выдержках") {
+		t.Fatalf("текст под чужой ссылкой должен быть помечен как неподтверждённый:\n%s", out)
+	}
+}
+
+// TestUnknownCiteIsFlagged: модель сослалась на главу, которой в выдаче не
+// было вовсе. Тоже не подтверждено.
+func TestUnknownCiteIsFlagged(t *testing.T) {
+	chapters := []corpus.Chapter{
+		{Cite: "Nicomachean Ethics I.7", Text: "an activity of soul in accordance with virtue"},
+	}
+	out, _ := printed([]Event{
+		{Kind: Cite, Text: "Metaphysics IV.3"}, // такой главы в выдаче нет
+		{Kind: En, Text: "an activity of soul in accordance with virtue"},
+		{Kind: Ru, Text: "деятельность души сообразно добродетели"},
+	}, chapters)
+	if !strings.Contains(out, "[!] нет в выдержках") {
+		t.Fatalf("ссылка, которой не было в выдаче, не должна подтверждаться:\n%s", out)
+	}
+}
+
+// TestSourcesMarksUnverifiedExcerpt закрывает вторую половину дефекта: /src
+// показывал непроверенные выдержки как чистые. Строка в Sources() обязана
+// нести ту же пометку [!], что и врезка.
+func TestSourcesMarksUnverifiedExcerpt(t *testing.T) {
+	chapters := []corpus.Chapter{{Cite: "NE I.7", Text: "an activity of soul"}}
+	_, p := printed([]Event{
+		{Kind: Cite, Text: "NE I.7"},
+		{Kind: En, Text: "happiness is contemplation of the stars"},
+		{Kind: Ru, Text: "выдумка"},
+	}, chapters)
+	src := p.Sources()
+	if len(src) != 1 || !strings.Contains(src[0], "[!]") {
+		t.Fatalf("непроверенная выдержка не помечена в /src: %+v", src)
+	}
+}
+
+// TestSourcesVerifiesOnEnEvenWithoutRu закрывает главный сценарий дефекта:
+// модель написала cite и en, но ru не написала — обычная оплошность.
+// Раньше строка копилась в sources в момент En, до всякой сверки и без
+// пометки: /src показывал бы такую выдержку как чистый источник, хотя она
+// вообще не проверялась. Теперь сверка делается на En, и /src обязан нести
+// правильную пометку даже без ru.
+func TestSourcesVerifiesOnEnEvenWithoutRu(t *testing.T) {
+	chapters := []corpus.Chapter{{Cite: "NE I.7", Text: "an activity of soul"}}
+
+	// Подтверждённая выдержка без ru: в /src не должно быть [!].
+	_, verified := printed([]Event{
+		{Kind: Cite, Text: "NE I.7"},
+		{Kind: En, Text: "an activity of soul"},
+	}, chapters)
+	vsrc := verified.Sources()
+	if len(vsrc) != 1 || strings.Contains(vsrc[0], "[!]") {
+		t.Fatalf("подтверждённая выдержка без ru не должна помечаться в /src: %+v", vsrc)
+	}
+
+	// Выдуманная выдержка без ru: в /src обязана быть [!], а не пройти
+	// чистым источником.
+	_, fabricated := printed([]Event{
+		{Kind: Cite, Text: "NE I.7"},
+		{Kind: En, Text: "happiness is contemplation of the stars"},
+	}, chapters)
+	fsrc := fabricated.Sources()
+	if len(fsrc) != 1 || !strings.Contains(fsrc[0], "[!]") {
+		t.Fatalf("выдуманная выдержка без ru должна быть помечена в /src: %+v", fsrc)
 	}
 }

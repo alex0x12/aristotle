@@ -22,11 +22,24 @@ type Session struct {
 	Corpus   Finder
 	System   string
 	Messages []provider.Message
+
+	// OnSearchWarning — необязательный колбэк для предупреждений, которые
+	// не должны срывать ход, но обязаны дойти до пользователя, а не
+	// затеряться в тексте, отданном модели. Пример — отказ поиска: qmd нет
+	// в PATH или коллекция не проиндексирована. Модель в этом случае
+	// вырождает ход в регистр вывода — правильный ответ на честно пустой
+	// корпус (5.5) — и со стороны это неотличимо от честной пустоты, если
+	// пользователь не увидит предупреждение отдельно.
+	OnSearchWarning func(msg string)
 }
 
 type TurnResult struct {
-	Text       string
-	Chapters   []string
+	Text string
+	// Chapters — главы, которые поиск реально вернул на этом ходу, вместе
+	// с их ссылками. Пара, а не голый текст: сверка обязана проверять, что
+	// выдержка нашлась именно в главе с той ссылкой, которую заявила модель,
+	// а не в какой-нибудь из пришедших.
+	Chapters   []corpus.Chapter
 	Iterations int
 	Exhausted  bool
 }
@@ -56,7 +69,7 @@ const exhaustedNote = "(поиск исчерпан: обращений к ко�
 	"отвечай тем, что найдено, либо признай, что не нашёл)"
 
 // renderHits готовит текст результата инструмента: главы целиком со ссылками.
-func renderHits(hits []corpus.Hit, exhausted bool) (string, []string) {
+func renderHits(hits []corpus.Hit, exhausted bool) (string, []corpus.Chapter) {
 	if len(hits) == 0 {
 		msg := "В корпусе ничего не найдено по этому запросу."
 		if exhausted {
@@ -65,7 +78,7 @@ func renderHits(hits []corpus.Hit, exhausted bool) (string, []string) {
 		return msg, nil
 	}
 	var b strings.Builder
-	texts := make([]string, 0, len(hits))
+	chapters := make([]corpus.Chapter, 0, len(hits))
 	for _, h := range hits {
 		c := h.Chapter
 		fmt.Fprintf(&b, "### %s\n", c.Cite)
@@ -74,12 +87,12 @@ func renderHits(hits []corpus.Hit, exhausted bool) (string, []string) {
 		}
 		b.WriteString(c.Text)
 		b.WriteString("\n\n")
-		texts = append(texts, c.Text)
+		chapters = append(chapters, c)
 	}
 	if exhausted {
 		b.WriteString(exhaustedNote + "\n")
 	}
-	return strings.TrimSpace(b.String()), texts
+	return strings.TrimSpace(b.String()), chapters
 }
 
 func (s *Session) Turn(ctx context.Context, userText string,
@@ -156,14 +169,18 @@ func (s *Session) Turn(ctx context.Context, userText string,
 				argString(call.Input, "group"),
 				argInt(call.Input, "k", 6))
 			if err != nil {
+				msg := "поиск не удался: " + err.Error()
+				if s.OnSearchWarning != nil {
+					s.OnSearchWarning(msg)
+				}
 				results = append(results, provider.ToolResult{
 					ID: call.ID, IsError: true,
-					Content: "поиск не удался: " + err.Error(),
+					Content: msg,
 				})
 				continue
 			}
-			content, texts := renderHits(hits, res.Exhausted)
-			res.Chapters = append(res.Chapters, texts...)
+			content, chapters := renderHits(hits, res.Exhausted)
+			res.Chapters = append(res.Chapters, chapters...)
 			results = append(results, provider.ToolResult{
 				ID: call.ID, Content: content,
 			})

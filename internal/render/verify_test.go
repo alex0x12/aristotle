@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/alex0x12/aristotle/internal/corpus"
 )
 
 // loadCorpusChapter читает главу корпуса и снимает YAML-frontmatter между
@@ -188,15 +190,30 @@ func TestRejectsParaphraseSpreadAcrossChapterPolitics(t *testing.T) {
 	}
 }
 
-// Раунд 3: тот же пробой на главе «О душе» II.1. Настоящий текст —
-// "the first grade of actuality of a natural body", а не "soul first
-// actuality of a natural body"; слово "soul" встречается многократно по всей
-// главе, и жадный поиск подхватывает первое попавшееся.
-func TestRejectsParaphraseSpreadAcrossChapterSoul(t *testing.T) {
+// Раунд 3 ошибочно считал это атакой; по решению координатора (1 сентября
+// 2026, после независимой проверки) ожидание изменено на противоположное.
+//
+// Настоящий текст главы «О душе» II.1 на этом месте — "soul is the first
+// grade of actuality of a natural body" (11 слов подряд). Цитата "soul first
+// actuality of a natural body" (7 слов) — подпоследовательность этого куска:
+// минимальное окно ровно 11 слов (предел для 7-словной цитаты — 3*7+10=31),
+// выброшены "is the" и "grade of". Это законная элизия — читатель, пошедший
+// по ссылке, найдёт место сразу, — а не пересказ вразброс: слова не собраны
+// по одному из разных концов главы, они лежат подряд в одном предложении.
+// Дополнительно: "first actuality" и "first grade of actuality" — два
+// принятых перевода одного греческого ἐντελέχεια ἡ πρώτη, смысл не искажён.
+//
+// Раньше тест проходил ТОЛЬКО из-за дефекта №1 (жадный якорь садился на
+// случайное "soul" в начале главы, за сотни слов до настоящего места, и
+// разброс 373 превышал предел). После починки минимального окна выяснилось,
+// что сама атака была ложной: две другие атаки этого раунда (Politics,
+// Ethics, ниже) настоящие — слова там подлинно разбросаны по разным
+// предложениям и минимальное окно у них подтверждённо большое.
+func TestAcceptsElidedQuoteFromRealChapterSoul(t *testing.T) {
 	chapter := loadCorpusChapter(t, "on-the-soul/ii/01.md")
 	q := "soul first actuality of a natural body"
-	if Verify(q, []string{chapter}) {
-		t.Fatal("пересказ, размазанный по главе, не должен проходить как цитата")
+	if !Verify(q, []string{chapter}) {
+		t.Fatal("законная элизия из настоящей главы должна проходить")
 	}
 }
 
@@ -219,5 +236,113 @@ func TestAcceptsVerbatimQuoteFromRealChapter(t *testing.T) {
 	q := "human good turns out to be activity of soul in accordance with virtue"
 	if !Verify(q, []string{chapter}) {
 		t.Fatal("дословная выдержка из настоящей главы должна проходить")
+	}
+}
+
+// --- VerifyInChapter: сверка обязана искать выдержку именно в главе с той
+// ссылкой, которую заявила модель, а не в любой из пришедших. ---
+
+func TestVerifyInChapterAcceptsRightCiteRightText(t *testing.T) {
+	chapters := []corpus.Chapter{
+		{Cite: "Nicomachean Ethics I.7", Text: passage},
+		{Cite: "Politics I.2", Text: "man is naturally a political animal"},
+	}
+	q := "an activity of soul in accordance with virtue"
+	if !VerifyInChapter(q, "Nicomachean Ethics I.7", chapters) {
+		t.Fatal("правильная ссылка с правильным текстом должна подтверждаться")
+	}
+}
+
+// Текст реально лежит в одной из пришедших глав, но заявлен под ссылкой на
+// ДРУГУЮ главу того же пула. Это ровно та подделка, ради предотвращения
+// которой ссылка вообще проверяется.
+func TestVerifyInChapterRejectsTextUnderWrongCite(t *testing.T) {
+	chapters := []corpus.Chapter{
+		{Cite: "Nicomachean Ethics I.7", Text: passage},
+		{Cite: "Politics I.2", Text: "man is naturally a political animal"},
+	}
+	q := "an activity of soul in accordance with virtue"
+	if VerifyInChapter(q, "Politics I.2", chapters) {
+		t.Fatal("правильный текст под чужой ссылкой из того же пула не должен подтверждаться")
+	}
+}
+
+// Ссылка, которой не было в выдаче вовсе.
+func TestVerifyInChapterRejectsUnknownCite(t *testing.T) {
+	chapters := []corpus.Chapter{
+		{Cite: "Nicomachean Ethics I.7", Text: passage},
+	}
+	q := "an activity of soul in accordance with virtue"
+	if VerifyInChapter(q, "Metaphysics IV.3", chapters) {
+		t.Fatal("ссылка, которой не было в выдаче, не должна подтверждаться")
+	}
+}
+
+// Сравнение ссылок — строгое равенство после TrimSpace: пробелы по краям не
+// должны портить сверку.
+func TestVerifyInChapterTrimsCiteWhitespace(t *testing.T) {
+	chapters := []corpus.Chapter{
+		{Cite: "  Nicomachean Ethics I.7  ", Text: passage},
+	}
+	q := "an activity of soul in accordance with virtue"
+	if !VerifyInChapter(q, "Nicomachean Ethics I.7", chapters) {
+		t.Fatal("пробелы по краям ссылки не должны мешать сверке")
+	}
+}
+
+// elidedSamples нарезает главу на окна по 14-20 нормализованных слов, из
+// середины каждого окна выбрасывает два слова — так модель обрывает цитату
+// многоточием или склеивает соседние предложения, — и возвращает список
+// получившихся выдержек вместе с текстом главы, из которой они нарезаны.
+func elidedSamples(t *testing.T, chapterText string) []string {
+	t.Helper()
+	words := strings.Fields(Normalize(chapterText))
+	var samples []string
+	for length := 14; length <= 20; length += 2 {
+		for start := 0; start+length <= len(words); start += 5 {
+			span := words[start : start+length]
+			mid := length / 2
+			elided := make([]string, 0, length-2)
+			elided = append(elided, span[:mid]...)
+			elided = append(elided, span[mid+2:]...)
+			samples = append(samples, strings.Join(elided, " "))
+		}
+	}
+	return samples
+}
+
+// TestAcceptsElidedExcerptsFromRealChapters — обязательный тест дефекта
+// №1 итогового ревью: законные выдержки с элизией из настоящих глав корпуса
+// обязаны приниматься. Раньше жадный поиск подпоследовательности цеплялся
+// за первое вхождение первого слова цитаты в главе, и на реальных главах это
+// бракетовало примерно две трети законных выдержек. Доля принятых обязана
+// быть выше 95%.
+func TestAcceptsElidedExcerptsFromRealChapters(t *testing.T) {
+	chapters := []string{
+		"nicomachean-ethics/i/07.md",
+		"physics/ii/03.md",
+		"on-the-soul/ii/01.md",
+		"politics/i/02.md",
+		"poetics/06.md",
+	}
+
+	var total, accepted int
+	for _, rel := range chapters {
+		text := loadCorpusChapter(t, rel)
+		for _, q := range elidedSamples(t, text) {
+			total++
+			if Verify(q, []string{text}) {
+				accepted++
+			}
+		}
+	}
+	if total == 0 {
+		t.Fatal("не набралось ни одного образца — проверь пути до глав корпуса")
+	}
+	rate := float64(accepted) / float64(total)
+	t.Logf("принято %d из %d законных выдержек с элизией (%.1f%%)", accepted, total, rate*100)
+	if rate <= 0.95 {
+		t.Fatalf("доля принятых законных выдержек с элизией = %.1f%% (%d/%d), нужно выше 95%%",
+			rate*100, accepted, total)
 	}
 }

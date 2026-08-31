@@ -4,6 +4,8 @@ package render
 import (
 	"strings"
 	"unicode"
+
+	"github.com/alex0x12/aristotle/internal/corpus"
 )
 
 // Threshold — доля слов выдержки, которую надо найти в одной главе,
@@ -61,42 +63,72 @@ func Verify(quote string, chapters []string) bool {
 		return false
 	}
 
-	// Шаг 2: жадный поиск подпоследовательности с сохранением порядка.
-	// Слова считаются только внутри одной главы: набор из разных глав
-	// цитатой не является.
+	// Шаг 2: поиск минимального окна подпоследовательности с сохранением
+	// порядка. Слова считаются только внутри одной главы: набор из разных
+	// глав цитатой не является.
 	for _, c := range chapters {
 		n := Normalize(c)
 		chapterWords := strings.Fields(n)
 
-		// Жадный поиск подпоследовательности.
+		// Прямой проход: жадно, слева направо, беря ПЕРВОЕ подходящее
+		// вхождение каждого следующего слова цитаты. Этого достаточно, чтобы
+		// подтвердить, что подпоследовательность вообще есть, и получить
+		// lastHit — позицию последнего слова цитаты при таком выравнивании.
+		// Начало окна (firstHit) этот проход не определяет: первое слово
+		// цитаты может быть частым и зацепиться далеко от настоящего места.
 		quoteIdx := 0
 		chapterIdx := 0
-
-		// firstHit/lastHit — позиции первого и последнего засчитанного слова
-		// в главе. По ним меряем разброс совпадения: подлинная выдержка
-		// укладывается в узкое окно, а случайный набор частых слов
-		// размазывается по всей главе.
-		firstHit := -1
 		lastHit := -1
 
 		for chapterIdx < len(chapterWords) && quoteIdx < len(quoteWords) {
 			if chapterWords[chapterIdx] == quoteWords[quoteIdx] {
-				if firstHit == -1 {
-					firstHit = chapterIdx
-				}
 				lastHit = chapterIdx
 				quoteIdx++
 			}
 			chapterIdx++
 		}
 
-		hit := quoteIdx
-		if float64(hit)/float64(len(quoteWords)) >= Threshold {
-			spread := lastHit - firstHit + 1
-			if spread <= 3*len(quoteWords)+10 {
-				return true
+		if float64(quoteIdx)/float64(len(quoteWords)) < Threshold {
+			continue
+		}
+
+		// Обратный проход: от lastHit к началу, поджимая левую границу.
+		// Для каждого слова цитаты, взятого с конца, берётся ПОСЛЕДНЕЕ
+		// подходящее вхождение, не заходя за уже занятую позицию следующего
+		// (по цитате) слова. Прямой проход уже доказал, что подпоследовательность
+		// целиком укладывается в [0, lastHit], поэтому обратный проход
+		// обязан найти позицию для каждого слова — окно получается
+		// минимальным по построению, а не случайным по первому совпадению.
+		firstHit := lastHit
+		pos := lastHit
+		for qi := len(quoteWords) - 1; qi >= 0; qi-- {
+			for pos >= 0 && chapterWords[pos] != quoteWords[qi] {
+				pos--
 			}
+			firstHit = pos
+			pos--
+		}
+
+		spread := lastHit - firstHit + 1
+		if spread <= 3*len(quoteWords)+10 {
+			return true
 		}
 	}
 	return false
+}
+
+// VerifyInChapter отвечает, подтверждается ли выдержка ровно той главой,
+// чью ссылку заявила модель, — а не какой-нибудь из пришедших на этом ходу.
+// Ссылки сравниваются строгим равенством после strings.TrimSpace. Если среди
+// chapters нет ни одной с такой ссылкой (модель сослалась на главу, которой
+// не было в выдаче, либо перепутала ссылку), выдержка не подтверждена.
+func VerifyInChapter(quote, cite string, chapters []corpus.Chapter) bool {
+	cite = strings.TrimSpace(cite)
+	var texts []string
+	for _, c := range chapters {
+		if strings.TrimSpace(c.Cite) == cite {
+			texts = append(texts, c.Text)
+		}
+	}
+	return Verify(quote, texts)
 }

@@ -91,6 +91,14 @@ func chapterHit(cite, text string) corpus.Hit {
 	return corpus.Hit{Chapter: corpus.Chapter{Cite: cite, Text: text}, Score: 0.9}
 }
 
+// erroringFinder имитирует отказ поиска: qmd нет в PATH, коллекция не
+// проиндексирована и т.п.
+type erroringFinder struct{ err error }
+
+func (f *erroringFinder) Search(context.Context, string, string, int) ([]corpus.Hit, error) {
+	return nil, f.err
+}
+
 func TestTurnWithoutTools(t *testing.T) {
 	p := &scriptedProvider{turns: [][]provider.Event{{
 		{Kind: provider.EventText, Text: "Начнём "},
@@ -142,7 +150,8 @@ func TestTurnRunsToolThenAnswers(t *testing.T) {
 		t.Errorf("Iterations = %d", res.Iterations)
 	}
 	if len(res.Chapters) != 1 ||
-		!strings.Contains(res.Chapters[0], "activity of soul") {
+		res.Chapters[0].Cite != "Nicomachean Ethics I.7" ||
+		!strings.Contains(res.Chapters[0].Text, "activity of soul") {
 		t.Errorf("Chapters = %+v", res.Chapters)
 	}
 	if res.Exhausted {
@@ -370,5 +379,73 @@ func TestArgIntConvertsFloat64FromJSON(t *testing.T) {
 	}
 	if f.gotK != 3 {
 		t.Errorf("k дошёл как %d, ожидалось 3 (аргумент был float64)", f.gotK)
+	}
+}
+
+// TestSearchFailureCallsOnSearchWarning закрывает дефект итогового ревью
+// ветки: сломанный поиск был неотличим от честно молчащего корпуса. Ошибка
+// поиска и раньше доходила до модели текстом "поиск не удался", но никогда
+// не доходила до пользователя — на экране это выглядело как обычный
+// уверенный ответ без ссылок, то есть точно так же, как правильный ответ на
+// честно пустой корпус (5.5). Колбэк обязан сработать с сообщением,
+// содержащим причину отказа.
+func TestSearchFailureCallsOnSearchWarning(t *testing.T) {
+	p := &scriptedProvider{turns: [][]provider.Event{
+		{
+			{Kind: provider.EventToolCall, Call: provider.ToolCall{
+				ID: "c1", Name: "search_corpus",
+				Input: map[string]any{"query": "happiness"}}},
+			{Kind: provider.EventDone, StopReason: "tool_use"},
+		},
+		{{Kind: provider.EventText, Text: "отвечаю без выдержек"},
+			{Kind: provider.EventDone, StopReason: "end_turn"}},
+	}}
+	cause := errors.New("exec: \"qmd\": executable file not found in $PATH")
+	f := &erroringFinder{err: cause}
+	var warnings []string
+	s := &Session{Provider: p, Corpus: f, OnSearchWarning: func(msg string) {
+		warnings = append(warnings, msg)
+	}}
+
+	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("OnSearchWarning вызван %d раз, ожидался 1: %+v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], cause.Error()) {
+		t.Errorf("предупреждение не содержит причину отказа: %q", warnings[0])
+	}
+}
+
+// TestSearchFailureWithoutCallbackStillReportsToModel проверяет, что
+// отсутствие OnSearchWarning (например, при вызове из eval) не роняет ход:
+// колбэк необязателен, модель всё равно получает текст об отказе.
+func TestSearchFailureWithoutCallbackStillReportsToModel(t *testing.T) {
+	p := &scriptedProvider{turns: [][]provider.Event{
+		{
+			{Kind: provider.EventToolCall, Call: provider.ToolCall{
+				ID: "c1", Name: "search_corpus",
+				Input: map[string]any{"query": "happiness"}}},
+			{Kind: provider.EventDone, StopReason: "tool_use"},
+		},
+		{{Kind: provider.EventDone, StopReason: "end_turn"}},
+	}}
+	f := &erroringFinder{err: errors.New("коллекция не проиндексирована")}
+	s := &Session{Provider: p, Corpus: f}
+
+	if _, err := s.Turn(context.Background(), "х", func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	last := p.seen[len(p.seen)-1]
+	var content string
+	var isError bool
+	for _, m := range last.Messages {
+		for _, r := range m.ToolResults {
+			content, isError = r.Content, r.IsError
+		}
+	}
+	if !isError || !strings.Contains(content, "поиск не удался") {
+		t.Errorf("модель должна получить текст отказа, получено %q (IsError=%v)", content, isError)
 	}
 }

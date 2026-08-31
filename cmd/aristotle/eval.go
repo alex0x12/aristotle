@@ -72,9 +72,10 @@ func runEval(path string, session *chat.Session, searcher *corpus.Searcher,
 		// Свежая сессия на каждый вопрос: иначе предыдущие ответы
 		// протекают в контекст и портят замер.
 		fresh := &chat.Session{
-			Provider: session.Provider,
-			Corpus:   session.Corpus,
-			System:   session.System,
+			Provider:        session.Provider,
+			Corpus:          session.Corpus,
+			System:          session.System,
+			OnSearchWarning: session.OnSearchWarning,
 		}
 		parser := &render.Parser{}
 		var events []render.Event
@@ -87,14 +88,21 @@ func runEval(path string, session *chat.Session, searcher *corpus.Searcher,
 		}
 		events = append(events, parser.Flush()...)
 
+		// lastCite — ссылка, которую модель заявила перед текущей en:.
+		// Сверка обязана искать выдержку именно в главе с этой ссылкой,
+		// а не в любой из пришедших: иначе цитата под чужой ссылкой из
+		// того же пула прошла бы как подтверждённая.
+		var lastCite string
 		for _, ev := range events {
-			if ev.Kind != render.En {
-				continue
-			}
-			report.Quotes++
-			if !render.Verify(ev.Text, res.Chapters) {
-				report.Fabricated++
-				fmt.Printf("  ВЫДУМКА (%s): %s\n", q.Ask, ev.Text)
+			switch ev.Kind {
+			case render.Cite:
+				lastCite = ev.Text
+			case render.En:
+				report.Quotes++
+				if !render.VerifyInChapter(ev.Text, lastCite, res.Chapters) {
+					report.Fabricated++
+					fmt.Printf("  ВЫДУМКА (%s): %s\n", q.Ask, ev.Text)
+				}
 			}
 		}
 		if q.Note != "" {

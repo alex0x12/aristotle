@@ -74,7 +74,10 @@ func main() {
 		Collection: "aristotle",
 		Root:       filepath.Join(*root, "corpus"),
 	}
-	session := &chat.Session{Provider: prov, Corpus: searcher, System: system}
+	session := &chat.Session{Provider: prov, Corpus: searcher, System: system,
+		OnSearchWarning: func(msg string) {
+			fmt.Fprintln(os.Stderr, "предупреждение:", msg)
+		}}
 
 	if *evalPath != "" {
 		os.Exit(runEval(*evalPath, session, searcher, *recallOnly))
