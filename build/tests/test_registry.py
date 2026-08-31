@@ -49,5 +49,10 @@ def test_production_registry_loads():
     assert len(works) == 29
     assert works["nicomachean-ethics"].group == "ethics"
     assert works["virtues-and-vices"].authenticity == "spurious"
-    assert all(w.url.endswith(".mb.txt") for w in works.values())
     assert all(w.url.startswith("https://") for w in works.values())
+    mit = [w for w in works.values() if w.source == "mit"]
+    ws = [w for w in works.values() if w.source == "wikisource"]
+    assert len(mit) == 20, "девять работ переехали на Wikisource"
+    assert len(ws) == 9
+    assert all(w.url.endswith(".mb.txt") for w in mit)
+    assert all(w.translator for w in ws), "у работ Wikisource переводчик задан явно"

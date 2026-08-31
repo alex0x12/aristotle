@@ -65,3 +65,11 @@ def test_handles_url_error(tmp_path, monkeypatch):
     from pathlib import Path
     cache_files = list(Path(tmp_path).glob("*.txt"))
     assert len(cache_files) == 0, "кэш не должен содержать файлы при ошибке"
+
+
+def test_detects_late_html_wrapper(tmp_path, monkeypatch):
+    # Реальный случай: гугл-кэш ставит <html> примерно на 1285-м байте.
+    wrapper = "x" * 1200 + "<html><body><pre>\nProvided by The Internet Classics Archive.\n"
+    monkeypatch.setattr(fetch, "_get", lambda url: wrapper)
+    with pytest.raises(fetch.FetchError, match="подмен"):
+        fetch.fetch("https://classics.mit.edu/Aristotle/politics.mb.txt", tmp_path)

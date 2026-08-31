@@ -14,14 +14,16 @@ on-dreams:
   title: On Dreams
   group: psychology
   authenticity: genuine
-  source: mit
-  url: https://classics.mit.edu/Aristotle/dreams.mb.txt
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Dreams_(Aristotle)
+  translator: John Isaac Beare
 gait-of-animals:
   title: On the Gait of Animals
   group: biology
   authenticity: genuine
-  source: mit
-  url: https://classics.mit.edu/Aristotle/gait_anim.mb.txt
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_the_Progression_of_Animals
+  translator: A. S. L. Farquharson
 generation-and-corruption:
   title: On Generation and Corruption
   group: physics
@@ -50,14 +52,16 @@ longevity-and-shortness-of-life:
   title: On Longevity and Shortness of Life
   group: psychology
   authenticity: genuine
-  source: mit
-  url: https://classics.mit.edu/Aristotle/longev_short.mb.txt
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Longevity_and_Shortness_of_Life
+  translator: George Robert Thompson Ross
 on-memory:
   title: On Memory and Reminiscence
   group: psychology
   authenticity: genuine
-  source: mit
-  url: https://classics.mit.edu/Aristotle/memory.mb.txt
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Memory_and_Reminiscence
+  translator: John Isaac Beare
 metaphysics:
   title: Metaphysics
   group: metaphysics
@@ -74,8 +78,9 @@ movement-of-animals:
   title: On the Motion of Animals
   group: biology
   authenticity: genuine
-  source: mit
-  url: https://classics.mit.edu/Aristotle/motion_animals.mb.txt
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_the_Movement_of_Animals
+  translator: A. S. L. Farquharson
 nicomachean-ethics:
   title: Nicomachean Ethics
   group: ethics
@@ -104,8 +109,9 @@ politics:
   title: Politics
   group: politics
   authenticity: genuine
-  source: mit
-  url: https://classics.mit.edu/Aristotle/politics.mb.txt
+  source: wikisource
+  url: https://en.wikisource.org/wiki/Politics_(Ellis)
+  translator: William Ellis
 posterior-analytics:
   title: Posterior Analytics
   group: logic
@@ -122,8 +128,9 @@ on-prophesying-by-dreams:
   title: On Prophesying by Dreams
   group: psychology
   authenticity: genuine
-  source: mit
-  url: https://classics.mit.edu/Aristotle/prophesying.mb.txt
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Prophesying_by_Dreams
+  translator: John Isaac Beare
 rhetoric:
   title: Rhetoric
   group: rhetoric-poetics
@@ -140,8 +147,9 @@ on-sleep:
   title: On Sleep and Sleeplessness
   group: psychology
   authenticity: genuine
-  source: mit
-  url: https://classics.mit.edu/Aristotle/sleep.mb.txt
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Sleep_and_Sleeplessness
+  translator: John Isaac Beare
 sophistical-refutations:
   title: On Sophistical Refutations
   group: logic
@@ -164,8 +172,9 @@ virtues-and-vices:
   title: Virtues and Vices
   group: ethics
   authenticity: spurious
-  source: mit
-  url: https://classics.mit.edu/Aristotle/aristot.vir.mb.txt
+  source: wikisource
+  url: https://en.wikisource.org/wiki/Virtues_and_Vices
+  translator: Joseph Solomon
 on-youth-and-old-age:
   title: On Youth and Old Age, On Life and Death, On Breathing
   group: psychology

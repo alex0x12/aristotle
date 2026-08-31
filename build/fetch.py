@@ -45,7 +45,7 @@ def fetch(url: str, cache_dir: Path) -> str:
         raise FetchError(
             f"таймаут при загрузке {url} (timeout={TIMEOUT}s)") from err
 
-    if "<HTML" in body.upper()[:400]:
+    if "<HTML" in body[:4096].upper():
         raise FetchError(
             f"подмена главной страницей вместо текста: {url}")
     path.write_text(body, encoding="utf-8")
