@@ -4376,7 +4376,6 @@ func TestCeilingStopsLoopAndMarksExhausted(t *testing.T) {
 - [ ] **Шаг 3: Написать цикл**
 
 ```go
-// internal/chat/loop.go
 package chat
 
 import (
@@ -4508,7 +4507,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 
 		results := make([]provider.ToolResult, 0, len(calls))
 		for _, call := range calls {
-			hits, err := s.Search(ctx,
+			hits, err := s.Search.Search(ctx,
 				argString(call.Input, "query"),
 				argString(call.Input, "group"),
 				argInt(call.Input, "k", 6))
@@ -4531,6 +4530,11 @@ func (s *Session) Turn(ctx context.Context, userText string,
 	}
 }
 ```
+
+**Код выше — поставленный, а не эталонный.** Первая редакция плана не
+компилировалась: поле `Search` объявлено интерфейсным типом `Finder`, а вызов
+был написан как `s.Search(ctx, ...)` — обращение к полю как к функции, чего
+в Go нет. Исправлено вызовом метода: `s.Search.Search(ctx, ...)`.
 
 - [ ] **Шаг 4: Запустить тест, убедиться что проходит**
 
