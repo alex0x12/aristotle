@@ -2526,6 +2526,32 @@ func TestSearchPassesCollectionAndLimit(t *testing.T) {
 	}
 }
 
+func TestSearchSkipsQmdProgressPreamble(t *testing.T) {
+	root := t.TempDir()
+	writeChapter(t, root, "ne/i/07.md", "genuine", "ethics", "NE I.7")
+	// Живой `qmd query` печатает это перед JSON. Разбор всего вывода упадёт.
+	preamble := "Expanding query... (0ms)\n" +
+		"Searching 5 queries...\nEmbedding 4 queries... (1.8s)\n" +
+		"Reranking 40 chunks... (2ms)\n"
+	s := &Searcher{Collection: "aristotle", Root: root,
+		Run: fakeQmd(preamble + `[{"file":"qmd://aristotle/ne/i/07.md","score":0.9}]`)}
+	hits, err := s.Search(context.Background(), "happiness", "", 6)
+	if err != nil {
+		t.Fatalf("преамбула не должна ломать разбор: %v", err)
+	}
+	if len(hits) != 1 || hits[0].Chapter.Cite != "NE I.7" {
+		t.Fatalf("получено %+v", hits)
+	}
+}
+
+func TestSearchFailsLoudlyWithoutJSON(t *testing.T) {
+	s := &Searcher{Collection: "aristotle", Root: t.TempDir(),
+		Run: fakeQmd("qmd: коллекция не найдена\n")}
+	if _, err := s.Search(context.Background(), "x", "", 6); err == nil {
+		t.Fatal("вывод без JSON обязан давать ошибку, а не пустую выдачу")
+	}
+}
+
 func TestSearchSkipsMissingFile(t *testing.T) {
 	s := &Searcher{Collection: "aristotle", Root: t.TempDir(),
 		Run: fakeQmd(`[{"file":"qmd://aristotle/нет/такого.md","score":0.9}]`)}
@@ -2551,6 +2577,7 @@ func TestSearchSkipsMissingFile(t *testing.T) {
 package corpus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -2599,6 +2626,16 @@ func (s *Searcher) Search(ctx context.Context, query, group string, k int) ([]Hi
 		"--json", "-n", strconv.Itoa(k))
 	if err != nil {
 		return nil, fmt.Errorf("qmd query: %w", err)
+	}
+
+	// qmd query печатает ход работы (расширение запроса, реранк) в stdout
+	// перед самим JSON, поэтому разбирать вывод целиком нельзя — ищем начало
+	// массива. У qmd search такой преамбулы нет, но код общий.
+	start := bytes.Index(out, []byte("\n["))
+	if start >= 0 {
+		out = out[start+1:]
+	} else if !bytes.HasPrefix(out, []byte("[")) {
+		return nil, fmt.Errorf("в выдаче qmd нет JSON: %.200s", out)
 	}
 
 	var results []qmdResult
