@@ -1,4 +1,5 @@
 """Сборка корпуса: реестр -> corpus/. Запуск: python build.py [--force]"""
+import dataclasses
 import shutil
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ import fetch
 import parse_mit
 import parse_ws
 import registry
+import sources
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
@@ -31,14 +33,27 @@ def main() -> int:
     get = lambda url: fetch.fetch(url, CACHE)
 
     total = 0
+    counts: dict[str, int] = {}
+    found: dict[str, str] = {}
     for slug, work in sorted(works.items()):
         translator, chapters = _chapters(work, get)
         for chapter in chapters:
             emit.write(CORPUS, work, chapter, translator)
+        counts[slug] = len(chapters)
+        if translator:
+            found[slug] = translator
         total += len(chapters)
         print(f"{slug:34s} {len(chapters):4d} глав")
 
     print(f"\nвсего глав: {total}")
+
+    enriched = {
+        slug: dataclasses.replace(w, translator=w.translator or found.get(slug))
+        for slug, w in works.items()
+    }
+    (ROOT / "SOURCES.md").write_text(
+        sources.render(enriched, counts), encoding="utf-8")
+    print("SOURCES.md записан")
     return 0
 
 
