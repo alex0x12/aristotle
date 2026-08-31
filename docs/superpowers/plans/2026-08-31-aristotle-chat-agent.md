@@ -1238,7 +1238,9 @@ cd build && python build.py
 find ../corpus -name '*.md' | wc -l
 head -20 ../corpus/nicomachean-ethics/i/07.md
 ```
-Ожидается: число файлов совпадает с «всего глав»; в файле НЭ I.7 фронтматтер
+Ожидается: собраны 20 работ MIT; тринадцать работ Wikisource на этом шаге
+пропускаются со строкой «нет парсера для источника wikisource» — их берёт
+на себя задача 5. Число файлов совпадает с «всего глав»; в файле НЭ I.7 фронтматтер
 с `cite: "Nicomachean Ethics I.7"` и текст про благо человека.
 
 - [ ] **Шаг 7: Проверить, что ни в один файл не утёк подвал**
@@ -1251,63 +1253,76 @@ head -20 ../corpus/nicomachean-ethics/i/07.md
 
 ```bash
 git add build/emit.py build/build.py build/tests/test_emit.py corpus/
-git commit -m "Запись корпуса в markdown по главам и сборка 29 работ MIT"
+git commit -m "Запись корпуса в markdown по главам и сборка двадцати работ MIT"
 ```
 
 ---
 
-## Task 5: Добор с Wikisource
+## Task 5: Разбор Wikisource
 
-Строение Wikisource проверено 31 августа 2026 на `On the Generation of Animals`
-и `Eudemian Ethics`:
+Wikisource теперь несёт **13 работ**: девять переехали в задаче 3 (семь с 404
+на MIT, «О добродетелях и пороках» без текстовой версии, «Политика» в обрезанной
+гугл-обёртке) и четыре добавляются здесь — их на MIT нет вовсе.
 
-- подстраницы перечисляются через API: `action=query&list=allpages&apprefix=<Работа>/`.
-  Схема нумерации **разная у разных работ** — у одной `Book I` (римские),
-  у другой `Book 1` (арабские), и она бывает неполной: у «Евдемовой этики»
-  есть книги 1, 2, 3 и 7, остальных нет. Поэтому список подстраниц надо
-  запрашивать, а не строить по шаблону;
-- сырой wikitext берётся так:
-  `https://en.wikisource.org/w/index.php?title=<Страница>&action=raw`;
-- в начале — шаблон `{{header ... | translator = Arthur Platt |
-  section = '''Book I''' ... }}`;
-- главы размечены `== Part 1 ==`;
-- абзацы разделены пустой строкой и **не** переносятся жёстко — склеивать
+Строение проверено через API 31 августа 2026, и оно неоднородно:
+
+- **подстраницы перечисляются запросом**, а не строятся по шаблону:
+  `action=query&list=allpages&apprefix=<Страница>/`. У «Политики (Эллис)» это
+  `Book 1`…`Book 8`, у «О возникновении животных» — `Book I`…`Book V`
+  (римские), у «Евдемовой этики» — `Book 1, 2, 3, 7` с дырами;
+- **среди подстраниц есть не-аристотелевские**: `Politics (Ellis)/Introduction`,
+  `Nicomachean Ethics/Notes`. Берутся только книгоподобные;
+- **у многих работ подстраниц нет вовсе** — весь текст на одной странице;
+- сырой wikitext: `https://en.wikisource.org/w/index.php?title=<Страница>&action=raw`;
+- в начале — шаблон `{{header … | translator = … | section = Book I … }}`,
+  метка книги обёрнута в три апострофа;
+- **граница главы — заголовок второго уровня, любой.** У одних работ это
+  `== Part 1 ==`, у «О движении животных» — `== 1 ==`. Номер бывает арабским
+  и римским. Работа без заголовков второго уровня — одна глава целиком;
+- абзацы разделены пустой строкой и **не** переносятся жёстко: склеивать
   строки не нужно.
+
+Три короткие работы на Wikisource идут без деления на главы:
+`On the Progression of Animals`, `On Dreams (Aristotle)`, `Virtues and Vices`.
+Каждая станет одной главой. Это приемлемо: трактаты короткие, а деления
+на MIT для них всё равно нет.
 
 **Файлы:**
 - Создать: `build/parse_ws.py`
 - Тест: `build/tests/test_parse_ws.py`
-- Изменить: `build/works.yaml` (добавить записи Wikisource)
-- Изменить: `build/build.py` (зарегистрировать парсер)
+- Изменить: `build/works.yaml` (четыре новые работы)
+- Изменить: `build/tests/test_registry.py` (счётчики)
+- Изменить: `build/build.py` (ветвление по источнику)
 
 **Интерфейсы:**
-- Потребляет: `parse_mit.Chapter`, `parse_mit.ParseError` (Task 3) — тип главы
-  общий для обоих парсеров.
+- Потребляет: `parse_mit.Chapter`, `parse_mit.ParseError`, `parse_mit.roman_to_int`
+  (тип главы и разбор римских чисел общие для обоих источников).
 - Отдаёт:
-  - `parse_ws.subpages(work_title: str, get) -> list[str]` — имена подстраниц;
-  - `parse_ws.parse_page(raw: str) -> tuple[str | None, str | None, list[Chapter]]` —
-    переводчик, метка книги, главы одной подстраницы;
+  - `parse_ws.page_title(url: str) -> str` — `…/wiki/Politics_(Ellis)` → `Politics (Ellis)`;
+  - `parse_ws.book_subpages(title: str, get) -> list[tuple[str, str]]` — пары
+    (имя подстраницы, метка книги), только книгоподобные, по возрастанию номера;
+  - `parse_ws.parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]`;
   - `parse_ws.parse_work(work, get) -> tuple[str | None, list[Chapter]]` —
-    подпись, совместимая с `parse_mit.parse`, но требующая доступа к сети,
-    поэтому принимает функцию-загрузчик `get(url: str) -> str`;
-  - `parse_ws.normalize_book(section: str) -> str | None` — `"Book 1"` -> `"I"`.
+    по смыслу совместим с `parse_mit.parse`, но ходит в сеть через `get(url) -> str`.
 
-- [ ] **Шаг 1: Написать падающий тест**
+- [ ] **Шаг 1: Написать падающие тесты**
 
 ```python
 # build/tests/test_parse_ws.py
 import json
 import pytest
-from parse_ws import normalize_book, parse_page, subpages
 from parse_mit import ParseError
+from parse_ws import book_subpages, page_title, parse_page
 
-PAGE = """{{header
+APOS = "'" * 3  # три апострофа: жирный в wikitext
+
+PAGE = f"""{{{{header
  | title      = [[../]]
  | author     = Aristotle
  | translator = Arthur Platt
- | section    = '''Book I'''
+ | section    = {APOS}Book I{APOS}
  | next       = [[../Book II|Book II]]
-}}
+}}}}
 
 
 == Part 1 ==
@@ -1321,166 +1336,243 @@ There are four causes underlying everything.
 Now the female is as it were a deformed male.
 """
 
+BARE_HEADINGS = """{{header
+ | translator = A. S. L. Farquharson
+}}
 
-def test_normalize_book_roman():
-    assert normalize_book("Book I") == "I"
+== 1 ==
+
+первая глава
+
+== 2 ==
+
+вторая глава
+"""
+
+NO_HEADINGS = """{{header
+ | translator = Joseph Solomon
+}}
+
+Весь текст одним куском, заголовков нет.
+
+Второй абзац.
+"""
 
 
-def test_normalize_book_arabic():
-    assert normalize_book("Book 1") == "I"
-    assert normalize_book("Book 7") == "VII"
+def test_page_title_from_url():
+    assert page_title("https://en.wikisource.org/wiki/Politics_(Ellis)") == "Politics (Ellis)"
+    assert page_title("https://en.wikisource.org/wiki/On_Dreams_(Aristotle)") == "On Dreams (Aristotle)"
 
 
-def test_normalize_book_absent():
-    assert normalize_book("") is None
-
-
-def test_parse_page_header():
-    translator, book, _ = parse_page(PAGE)
+def test_parse_page_header_and_chapters():
+    translator, chapters = parse_page(PAGE, "I")
     assert translator == "Arthur Platt"
-    assert book == "I"
-
-
-def test_parse_page_chapters():
-    _, _, chapters = parse_page(PAGE)
     assert [c.number for c in chapters] == [1, 2]
-    assert chapters[0].book == "I"
+    assert all(c.book == "I" for c in chapters)
     assert chapters[0].text.startswith("WE have now discussed")
     assert "\n\n" in chapters[0].text, "два абзаца должны сохраниться"
     assert chapters[1].text == "Now the female is as it were a deformed male."
 
 
-def test_parse_page_without_parts():
-    with pytest.raises(ParseError, match="глав"):
-        parse_page("{{header | translator = X }}\n\nтекст без разметки\n")
+def test_bare_numeric_headings_are_chapters():
+    _, chapters = parse_page(BARE_HEADINGS, None)
+    assert [c.number for c in chapters] == [1, 2]
+    assert chapters[0].text == "первая глава"
 
 
-def test_subpages_uses_prefix(monkeypatch):
-    captured = {}
+def test_page_without_headings_is_one_chapter():
+    translator, chapters = parse_page(NO_HEADINGS, None)
+    assert translator == "Joseph Solomon"
+    assert len(chapters) == 1
+    assert chapters[0].number == 1
+    assert "Второй абзац." in chapters[0].text
 
+
+def test_parse_page_strips_wiki_markup():
+    raw = ("{{header | translator = X }}\n\n== Part 1 ==\n\n"
+           f"см. [[Physics|Физику]] и {APOS}важное{APOS}\n")
+    _, chapters = parse_page(raw, None)
+    assert "[[" not in chapters[0].text
+    assert APOS not in chapters[0].text
+    assert "Физику" in chapters[0].text
+
+
+def test_parse_page_rejects_empty_body():
+    with pytest.raises(ParseError, match="пуст"):
+        parse_page("{{header | translator = X }}\n\n", None)
+
+
+def test_book_subpages_filters_non_books_and_sorts():
     def fake_get(url):
-        captured["url"] = url
         return json.dumps({"query": {"allpages": [
-            {"title": "Eudemian Ethics"},
-            {"title": "Eudemian Ethics/Book 1"},
-            {"title": "Eudemian Ethics/Book 7"},
+            {"title": "Politics (Ellis)/Book 10"},
+            {"title": "Politics (Ellis)/Book 2"},
+            {"title": "Politics (Ellis)/Introduction"},
+            {"title": "Politics (Ellis)/Book 1"},
         ]}})
 
-    pages = subpages("Eudemian Ethics", fake_get)
-    assert pages == ["Eudemian Ethics/Book 1", "Eudemian Ethics/Book 7"], \
-        "корневая страница не входит в список"
-    assert "apprefix=Eudemian%20Ethics%2F" in captured["url"].replace("+", "%20")
+    pages = book_subpages("Politics (Ellis)", fake_get)
+    assert [name for name, _ in pages] == [
+        "Politics (Ellis)/Book 1",
+        "Politics (Ellis)/Book 2",
+        "Politics (Ellis)/Book 10",
+    ], "введение отброшено, порядок числовой а не лексикографический"
+    assert [book for _, book in pages] == ["I", "II", "X"]
+
+
+def test_book_subpages_accepts_roman():
+    def fake_get(url):
+        return json.dumps({"query": {"allpages": [
+            {"title": "On the Generation of Animals/Book II"},
+            {"title": "On the Generation of Animals/Book I"},
+        ]}})
+
+    pages = book_subpages("On the Generation of Animals", fake_get)
+    assert [book for _, book in pages] == ["I", "II"]
+
+
+def test_book_subpages_empty_when_no_subpages():
+    def fake_get(url):
+        return json.dumps({"query": {"allpages": []}})
+
+    assert book_subpages("On Dreams (Aristotle)", fake_get) == []
 ```
 
-- [ ] **Шаг 2: Запустить тест, убедиться что падает**
+- [ ] **Шаг 2: Запустить тесты, убедиться что падают**
 
 Выполнить: `cd build && python -m pytest tests/test_parse_ws.py -v`
 Ожидается: FAIL, `ModuleNotFoundError: No module named 'parse_ws'`
 
-- [ ] **Шаг 3: Написать минимальную реализацию**
+- [ ] **Шаг 3: Написать реализацию**
 
 ```python
 # build/parse_ws.py
 import json
 import re
-from urllib.parse import quote
+import time
+from urllib.parse import quote, unquote
 
-from parse_mit import Chapter, ParseError
+from parse_mit import Chapter, ParseError, roman_to_int
 
 API = "https://en.wikisource.org/w/api.php"
 RAW = "https://en.wikisource.org/w/index.php"
+DELAY = 1.0  # пауза между обращениями: API отвечает 429 на частые запросы
 
 TRANSLATOR_RE = re.compile(r"^\s*\|\s*translator\s*=\s*(.+?)\s*$", re.M)
-SECTION_RE = re.compile(r"^\s*\|\s*section\s*=\s*'''(.+?)'''\s*$", re.M)
-PART_RE = re.compile(r"^==\s*Part\s+(\d+)\s*==\s*$")
+HEADING_RE = re.compile(r"^==\s*(.+?)\s*==\s*$")
+NUMBER_RE = re.compile(r"(\d+|[IVXLC]+)\s*$")
+BOOK_SUB_RE = re.compile(r"/Book\s+(\d+|[IVXLC]+)\s*$", re.I)
 LINK_RE = re.compile(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]")
 TEMPLATE_RE = re.compile(r"\{\{[^{}]*\}\}")
+BOLD_RE = re.compile(r"'{2,3}")
 
-ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
-         "XI", "XII", "XIII", "XIV"]
-
-
-def normalize_book(section: str) -> str | None:
-    m = re.search(r"Book\s+([IVXLC]+|\d+)", section or "")
-    if not m:
-        return None
-    token = m.group(1)
-    if token.isdigit():
-        return ROMAN[int(token)]
-    return token
+ROMAN_OUT = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+             "XI", "XII", "XIII", "XIV", "XV"]
 
 
-def subpages(work_title: str, get) -> list[str]:
+def page_title(url: str) -> str:
+    return unquote(url.rsplit("/", 1)[-1]).replace("_", " ")
+
+
+def _to_int(token: str) -> int:
+    return int(token) if token.isdigit() else roman_to_int(token)
+
+
+def book_subpages(title: str, get) -> list[tuple[str, str]]:
+    """Книгоподобные подстраницы по возрастанию номера.
+
+    Имена подстраниц у разных работ разные — `Book 1` и `Book I`, — а среди них
+    попадаются чужие: Introduction, Notes. Поэтому список запрашивается,
+    фильтруется и сортируется по числовому значению, а не лексикографически:
+    иначе `Book 10` встанет между `Book 1` и `Book 2`.
+    """
     url = (f"{API}?action=query&list=allpages"
-           f"&apprefix={quote(work_title + '/')}"
-           f"&aplimit=200&format=json")
+           f"&apprefix={quote(title + '/')}&aplimit=200&format=json")
     data = json.loads(get(url))
-    titles = [p["title"] for p in data.get("query", {}).get("allpages", [])]
-    return [t for t in titles if t != work_title]
+    found: list[tuple[int, str]] = []
+    for page in data.get("query", {}).get("allpages", []):
+        match = BOOK_SUB_RE.search(page["title"])
+        if match:
+            found.append((_to_int(match.group(1)), page["title"]))
+    found.sort()
+    return [(name, ROMAN_OUT[number]) for number, name in found]
 
 
 def _strip_markup(text: str) -> str:
     text = TEMPLATE_RE.sub("", text)
     text = LINK_RE.sub(r"\1", text)
-    text = text.replace("'''", "").replace("''", "")
-    return text
+    return BOLD_RE.sub("", text)
 
 
-def parse_page(raw: str) -> tuple[str | None, str | None, list[Chapter]]:
-    tm = TRANSLATOR_RE.search(raw)
-    translator = tm.group(1) if tm else None
-    sm = SECTION_RE.search(raw)
-    book = normalize_book(sm.group(1)) if sm else None
+def _reflow(lines: list[str]) -> str:
+    body = _strip_markup("\n".join(lines)).strip()
+    return re.sub(r"\n{3,}", "\n\n", body)
 
+
+def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
+    match = TRANSLATOR_RE.search(raw)
+    translator = match.group(1) if match else None
+
+    lines = raw.splitlines()
     chapters: list[Chapter] = []
     number: int | None = None
     buf: list[str] = []
 
     def flush() -> None:
         if number is not None:
-            body = _strip_markup("\n".join(buf)).strip()
-            body = re.sub(r"\n{3,}", "\n\n", body)
-            chapters.append(Chapter(book=book, number=number, text=body))
+            chapters.append(Chapter(book=book, number=number, text=_reflow(buf)))
 
-    for line in raw.splitlines():
-        m = PART_RE.match(line)
-        if m:
+    for line in lines:
+        heading = HEADING_RE.match(line)
+        if heading:
             flush()
-            number, buf = int(m.group(1)), []
+            found = NUMBER_RE.search(heading.group(1))
+            number = _to_int(found.group(1)) if found else len(chapters) + 1
+            buf = []
             continue
         if number is not None:
             buf.append(line)
     flush()
 
     if not chapters:
-        raise ParseError("не найдено ни одной главы: нет разметки == Part N ==")
-    return translator, book, chapters
+        # Работа без заголовков второго уровня — одна глава целиком.
+        body = _reflow(lines)
+        if not body:
+            raise ParseError("страница пуста: ни заголовков, ни текста")
+        chapters = [Chapter(book=book, number=1, text=body)]
+
+    return translator, chapters
 
 
 def parse_work(work, get) -> tuple[str | None, list[Chapter]]:
     """Совместим по смыслу с parse_mit.parse, но ходит в сеть через get."""
-    pages = subpages(work.title, get)
+    title = page_title(work.url)
+    subpages = book_subpages(title, get)
+    targets = subpages or [(title, None)]
+
     translator: str | None = None
-    all_chapters: list[Chapter] = []
-    for page in pages:
-        url = f"{RAW}?title={quote(page)}&action=raw"
-        tr, _, chapters = parse_page(get(url))
-        translator = translator or tr
-        all_chapters.extend(chapters)
-    if not all_chapters:
-        raise ParseError(f"{work.slug}: не найдено подстраниц с текстом")
-    return translator, all_chapters
+    chapters: list[Chapter] = []
+    for index, (name, book) in enumerate(targets):
+        if index:
+            time.sleep(DELAY)
+        url = f"{RAW}?title={quote(name)}&action=raw"
+        found, page_chapters = parse_page(get(url), book)
+        translator = translator or found
+        chapters.extend(page_chapters)
+
+    if not chapters:
+        raise ParseError(f"{work.slug}: не найдено ни одной главы")
+    return translator, chapters
 ```
 
-- [ ] **Шаг 4: Запустить тест, убедиться что проходит**
+- [ ] **Шаг 4: Запустить тесты, убедиться что проходят**
 
 Выполнить: `cd build && python -m pytest tests/test_parse_ws.py -v`
-Ожидается: PASS, 7 тестов
+Ожидается: PASS, 9 тестов.
 
-- [ ] **Шаг 5: Добавить записи Wikisource в реестр**
+- [ ] **Шаг 5: Добавить четыре работы, которых нет на MIT**
 
-Дописать в `build/works.yaml`. Поле `url` для Wikisource несёт **корневую
-страницу работы** — подстраницы обнаруживаются запросом.
+Дописать в `build/works.yaml`:
 
 ```yaml
 generation-of-animals:
@@ -1489,6 +1581,7 @@ generation-of-animals:
   authenticity: genuine
   source: wikisource
   url: https://en.wikisource.org/wiki/On_the_Generation_of_Animals
+  translator: Arthur Platt
 eudemian-ethics:
   title: Eudemian Ethics
   group: ethics
@@ -1509,25 +1602,22 @@ on-plants:
   url: https://en.wikisource.org/wiki/On_Plants
 ```
 
-Обновить тест полноты из Task 1, шаг 6: `assert len(works) == 33`, и снять
-проверки `w.url.endswith(".mb.txt")` — теперь они верны только для MIT:
+Обновить счётчики в `build/tests/test_registry.py`:
 
 ```python
-def test_production_registry_loads():
-    works = load(WORKS)
     assert len(works) == 33
-    assert works["nicomachean-ethics"].group == "ethics"
-    assert works["virtues-and-vices"].authenticity == "spurious"
-    assert all(w.url.startswith("https://") for w in works.values())
     mit = [w for w in works.values() if w.source == "mit"]
-    assert len(mit) == 29
-    assert all(w.url.endswith(".mb.txt") for w in mit)
+    ws = [w for w in works.values() if w.source == "wikisource"]
+    assert len(mit) == 20
+    assert len(ws) == 13
 ```
+
+Проверку `assert all(w.translator for w in ws)` **убрать**: у трёх новых работ
+переводчик берётся из шапки страницы, а не задаётся в реестре.
 
 - [ ] **Шаг 6: Подключить парсер в оркестровку**
 
-В `build/build.py` заменить словарь `PARSERS` и цикл: у парсеров разные
-подписи, поэтому ветвление явное.
+В `build/build.py` завести ветвление по источнику:
 
 ```python
 import parse_ws
@@ -1541,28 +1631,36 @@ def _chapters(work, get):
 ```
 
 В `main()` завести `get = lambda url: fetch.fetch(url, CACHE)` и звать
-`translator, chapters = _chapters(work, get)`; строку с `PARSERS.get(...)`
+`translator, chapters = _chapters(work, get)`. Прежнюю строку с `PARSERS.get(...)`
 и её проверку удалить.
+
+Внимание: `fetch.fetch` отвергает не-https и распознаёт HTML-подмену. Ответ
+Wikisource `action=raw` — это чистый wikitext, а ответ API — JSON, так что ни
+та ни другая проверка ложно не срабатывает. Кэш `fetch` заодно снимает
+проблему лимита запросов при повторных сборках.
 
 - [ ] **Шаг 7: Пересобрать корпус и проверить добор**
 
-Выполнить:
 ```bash
 cd build && python build.py --force
-ls ../corpus/generation-of-animals/
-grep -l "deformed male" -r ../corpus/generation-of-animals/ | head -3
+ls ../corpus/generation-of-animals/ ../corpus/politics/
+grep -rl "deformed male" ../corpus/generation-of-animals/ | head -3
 find ../corpus -name '*.md' | wc -l
 ```
-Ожидается: каталоги `i`…`v` у «О возникновении животных», найденное место
-про «deformed male» (на него ссылается пример сноски `[факт]` в спеке 5.3),
-итоговое число файлов больше прежнего.
+
+Ожидается: у «О возникновении животных» каталоги `i`…`v`, у «Политики» —
+`i`…`viii` (перевод Эллиса полон, все восемь книг); найдено место про
+«deformed male», на которое опирается пример сноски `[факт]` в спеке 5.3.
+
+Если какая-то работа даёт ноль глав — открыть её страницу руками и посмотреть
+разметку, не подгоняя регулярку вслепую.
 
 - [ ] **Шаг 8: Коммит**
 
 ```bash
 git add build/parse_ws.py build/tests/test_parse_ws.py build/works.yaml \
         build/build.py build/tests/test_registry.py corpus/
-git commit -m "Добор четырёх работ с Wikisource, включая О возникновении животных"
+git commit -m "Разбор Wikisource по заголовкам и добор тринадцати работ"
 ```
 
 ---
