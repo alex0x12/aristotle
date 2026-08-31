@@ -34,7 +34,7 @@ func Builtin() Config {
 			"deepseek": {
 				Kind:    "openai",
 				BaseURL: "https://api.deepseek.com/v1",
-				Model:   "deepseek-chat",
+				Model:   "deepseek-v4-pro",
 				KeyEnv:  "DEEPSEEK_API_KEY",
 			},
 			"openai": {
