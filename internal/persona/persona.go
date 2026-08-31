@@ -19,9 +19,14 @@ func Load(dir string) (string, error) {
 
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-			names = append(names, e.Name())
+		name := e.Name()
+		// Имена с точки отбрасываем: блокировочный симлинк редактора
+		// (.#04-doctrine.md) прошёл бы фильтр по расширению, а чтение по нему
+		// упало бы — и промпт не собрался бы только из-за открытого редактора.
+		if e.IsDir() || strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".md") {
+			continue
 		}
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	if len(names) == 0 {

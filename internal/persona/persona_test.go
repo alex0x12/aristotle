@@ -54,3 +54,63 @@ func TestLoadEmptyDirFails(t *testing.T) {
 		t.Fatal("пустой каталог персоны — ошибка, а не пустой промпт")
 	}
 }
+
+// Открытый в редакторе файл персоны оставляет рядом висячий симлинк
+// .#04-doctrine.md: он проходит фильтр по расширению, а читается с ошибкой.
+func TestLoadSkipsDotFiles(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "01-who.md", "био")
+	if err := os.Symlink("никуда", filepath.Join(dir, ".#01-who.md")); err != nil {
+		t.Skipf("симлинки недоступны: %v", err)
+	}
+	out, err := Load(dir)
+	if err != nil {
+		t.Fatalf("висячий файл редактора не должен ронять сборку: %v", err)
+	}
+	if out != "био" {
+		t.Fatalf("собралось не то: %q", out)
+	}
+}
+
+// Тесты выше работают на временных каталогах и не заметят, если файл персоны
+// переименуют или удалят. Этот смотрит на настоящий persona/.
+func TestRealPersonaAssembles(t *testing.T) {
+	dir := filepath.Join("..", "..", "persona")
+	out, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{
+		"01-who.md", "02-voice.md", "03-method.md",
+		"04-doctrine.md", "05-contract.md",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("файл персоны пропал: %s", name)
+		}
+	}
+
+	// Промпт входит в кэшируемый префикс каждого запроса, потолок — 18 КБ.
+	const maxBytes = 18 * 1024
+	if len(out) > maxBytes {
+		t.Errorf("промпт разросся до %d байт при потолке %d", len(out), maxBytes)
+	}
+
+	// У пользователя нет шрифта для эмодзи, стрелок и прочих значков: всё,
+	// что нужно персоне (кириллица, греческий, кавычки, тире), лежит ниже U+2100.
+	for i, r := range out {
+		if r > 0x2100 {
+			t.Fatalf("посторонний знак U+%04X на позиции %d", r, i)
+		}
+	}
+
+	// Набор маркеров закрыт в internal/render; персона обязана называть все шесть.
+	for _, marker := range []string{
+		">> cite:", ">> en:", ">> ru:",
+		">> вывод:", ">> [факт]:", ">> [посылка]:",
+	} {
+		if !strings.Contains(out, marker) {
+			t.Errorf("маркер %q не дожил до собранного промпта", marker)
+		}
+	}
+}
