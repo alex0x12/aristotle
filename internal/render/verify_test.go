@@ -111,10 +111,13 @@ func TestRejectionTwoWords(t *testing.T) {
 }
 
 // Законный случай: склейка двух соседних предложений главы.
+// Нечёткий шаг: цитата из двух разных частей главы, пропускающая среднее предложение.
 func TestAcceptsJoinedSentences(t *testing.T) {
-	q := "an activity of soul in accordance with virtue and if there are more than one virtue"
-	if !Verify(q, []string{passage}) {
-		t.Fatal("склейка двух соседних предложений должна проходить")
+	chapter := "the good of man turns out to be. an activity of soul in accordance with virtue. and if there are more than one virtue."
+	// Цитата склеивает первое и третье предложения, пропуская второе.
+	q := "the good of man turns out to be and if there are more than one virtue"
+	if !Verify(q, []string{chapter}) {
+		t.Fatal("склейка предложений пропусками должна проходить как подпоследовательность")
 	}
 }
 
@@ -139,5 +142,14 @@ func TestRejectsLongerThanSource(t *testing.T) {
 	q := "the good of man turns out to be an activity of soul in accordance with virtue"
 	if Verify(q, []string{chapter}) {
 		t.Fatal("цитата длиннее главы не должна проходить")
+	}
+}
+
+// Раунд 2: цитата с подмешанным выдуманным словом отвергается.
+// Это была атака ревьюера: двенадцать настоящих слов плюс одно выдуманное даёт 92.3%.
+func TestRejectsInjectedWord(t *testing.T) {
+	q := "the good of man turns out to be an activity of soul unicorns"
+	if Verify(q, []string{passage}) {
+		t.Fatal("цитата с подмешанным выдуманным словом не должна проходить")
 	}
 }
