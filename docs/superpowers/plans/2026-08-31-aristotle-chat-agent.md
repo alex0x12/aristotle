@@ -580,71 +580,234 @@ git commit -m "Скачивание текстов с кэшем и защито
 
 ---
 
-## Task 3: Разбор текста MIT в главы
+## Task 3: Разбор текстов MIT в главы
+
+Формат MIT проверен на живых файлах 31 августа 2026, и он **не такой**, как
+предполагала первая редакция плана. Факты, на которых строится парсер:
+
+- `BOOK <римская>` — настоящая граница книги, нумерация глав сбрасывается на 1
+  в каждой книге («Физика»: BOOK I → 1..9, BOOK II → 1..9);
+- `SECTION <арабская>` — **не граница чего-либо**, а артефакт постраничной
+  разбивки сайта: нумерация идёт сквозь секции непрерывно («Афинская полития»:
+  SECTION 1 несёт главы 1–22, SECTION 2 продолжает 23–44). Строки выбрасываются,
+  работа считается не имеющей деления на книги;
+- `Part N` — граница главы в 20 работах из 21. Номер бывает арабским и
+  **римским** («Поэтика»: I…XXVI);
+- голая цифра — граница главы ровно в одной работе, «Никомаховой этике».
+
+Девять работ переезжают на Wikisource: у семи `.mb.txt` даёт 404, у
+«О добродетелях и пороках» текстовой версии нет, а «Политика» приходит в
+обрезанной HTML-обёртке гугл-кэша (101 КБ вместо ~380, воспроизводится
+стабильно). После переезда на MIT остаётся 20 работ.
 
 **Файлы:**
 - Создать: `build/parse_mit.py`
 - Тест: `build/tests/test_parse_mit.py`
-- Создать: `build/tests/fixtures/ne_head.mb.txt` (обрезанный реальный файл)
+- Создать: `build/tests/fixtures/mit_books.mb.txt`, `build/tests/fixtures/mit_sections.mb.txt`
+- Изменить: `build/works.yaml` (девять работ на Wikisource)
+- Изменить: `build/tests/test_registry.py` (счётчики)
+- Изменить: `build/fetch.py` (окно проверки подмены)
 
 **Интерфейсы:**
-- Потребляет: `registry.Work` из Task 1.
+- Потребляет: `registry.Work`, `fetch.fetch`.
 - Отдаёт:
   - `parse_mit.Chapter` — frozen dataclass с полями `book: str | None`,
     `number: int`, `text: str`;
-  - `parse_mit.parse(raw: str) -> tuple[str | None, list[Chapter]]` —
-    возвращает переводчика (или `None`) и список глав по порядку;
-  - исключение `ParseError`.
+  - `parse_mit.roman_to_int(token: str) -> int`;
+  - `parse_mit.parse(raw: str) -> tuple[str | None, list[Chapter]]`;
+  - исключение `parse_mit.ParseError`.
 
-- [ ] **Шаг 1: Собрать фикстуру из живого файла**
+- [ ] **Шаг 1: Перевести девять работ на Wikisource**
 
-Взять первые две главы книги I и первую главу книги II — так фикстура покроет
-и границу главы, и границу книги.
+Имена страниц и переводчики проверены через API Wikisource. В `build/works.yaml`
+у этих девяти записей заменить `source` и `url` и добавить `translator`:
+
+```yaml
+politics:
+  title: Politics
+  group: politics
+  authenticity: genuine
+  source: wikisource
+  url: https://en.wikisource.org/wiki/Politics_(Ellis)
+  translator: William Ellis
+gait-of-animals:
+  title: On the Gait of Animals
+  group: biology
+  authenticity: genuine
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_the_Progression_of_Animals
+  translator: A. S. L. Farquharson
+longevity-and-shortness-of-life:
+  title: On Longevity and Shortness of Life
+  group: psychology
+  authenticity: genuine
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Longevity_and_Shortness_of_Life
+  translator: George Robert Thompson Ross
+movement-of-animals:
+  title: On the Motion of Animals
+  group: biology
+  authenticity: genuine
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_the_Movement_of_Animals
+  translator: A. S. L. Farquharson
+on-dreams:
+  title: On Dreams
+  group: psychology
+  authenticity: genuine
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Dreams_(Aristotle)
+  translator: John Isaac Beare
+on-memory:
+  title: On Memory and Reminiscence
+  group: psychology
+  authenticity: genuine
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Memory_and_Reminiscence
+  translator: John Isaac Beare
+on-prophesying-by-dreams:
+  title: On Prophesying by Dreams
+  group: psychology
+  authenticity: genuine
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Prophesying_by_Dreams
+  translator: John Isaac Beare
+on-sleep:
+  title: On Sleep and Sleeplessness
+  group: psychology
+  authenticity: genuine
+  source: wikisource
+  url: https://en.wikisource.org/wiki/On_Sleep_and_Sleeplessness
+  translator: John Isaac Beare
+virtues-and-vices:
+  title: Virtues and Vices
+  group: ethics
+  authenticity: spurious
+  source: wikisource
+  url: https://en.wikisource.org/wiki/Virtues_and_Vices
+  translator: Joseph Solomon
+```
+
+Поле `title` остаётся человекочитаемым именем работы; страница Wikisource
+выводится парсером из `url`, отдельного поля для неё не заводим.
+
+Обновить тест полноты в `build/tests/test_registry.py`:
+
+```python
+def test_production_registry_loads():
+    works = load(WORKS)
+    assert len(works) == 29
+    assert works["nicomachean-ethics"].group == "ethics"
+    assert works["virtues-and-vices"].authenticity == "spurious"
+    assert all(w.url.startswith("https://") for w in works.values())
+    mit = [w for w in works.values() if w.source == "mit"]
+    ws = [w for w in works.values() if w.source == "wikisource"]
+    assert len(mit) == 20, "девять работ переехали на Wikisource"
+    assert len(ws) == 9
+    assert all(w.url.endswith(".mb.txt") for w in mit)
+    assert all(w.translator for w in ws), "у работ Wikisource переводчик задан явно"
+```
+
+Выполнить: `cd build && python -m pytest tests/test_registry.py -v`
+Ожидается: PASS.
+
+- [ ] **Шаг 2: Расширить окно проверки подмены в fetch.py**
+
+Проверка `"<HTML" in body.upper()[:400]` не поймала реальный случай: в обёртке
+гугл-кэша тег `<html>` стоит на 1285-м байте. Окно расширяется до 4096 символов,
+и заодно убирается лишняя аллокация всего тела.
+
+В `build/fetch.py` заменить строку проверки на:
+
+```python
+    if "<HTML" in body[:4096].upper():
+```
+
+Дописать тест в `build/tests/test_fetch.py`:
+
+```python
+def test_detects_late_html_wrapper(tmp_path, monkeypatch):
+    # Реальный случай: гугл-кэш ставит <html> примерно на 1285-м байте.
+    wrapper = "x" * 1200 + "<html><body><pre>\nProvided by The Internet Classics Archive.\n"
+    monkeypatch.setattr(fetch, "_get", lambda url: wrapper)
+    with pytest.raises(fetch.FetchError, match="подмен"):
+        fetch.fetch("https://classics.mit.edu/Aristotle/politics.mb.txt", tmp_path)
+```
+
+Выполнить: `cd build && python -m pytest tests/test_fetch.py -v`
+Ожидается: PASS, 6 тестов.
+
+- [ ] **Шаг 3: Собрать две фикстуры из живых файлов**
+
+Нужны обе разновидности разметки: с книгами и с секциями.
 
 ```bash
 cd build && python - <<'EOF'
 from pathlib import Path
 import fetch
+
+# 1) книги + голые цифры: Никомахова этика. BOOK II стоит на 769-й строке,
+#    поэтому берём 900 строк — иначе граница книги в фикстуру не попадёт.
 raw = fetch.fetch('https://classics.mit.edu/Aristotle/nicomachaen.mb.txt', Path('.cache'))
-lines = raw.splitlines()
-# шапка + книга I главы 1-2 + книга II глава 1, плюс рукописный хвост
-cut = lines[:80] + ['', 'THE END', '', '-' * 70, '', 'Copyright statement:', 'ICA']
-Path('tests/fixtures/ne_head.mb.txt').write_text('\n'.join(cut) + '\n', encoding='utf-8')
-print('строк в фикстуре:', len(cut))
+tail = ['', 'THE END', '', '-' * 70, '', 'Copyright statement:', 'ICA']
+Path('tests/fixtures/mit_books.mb.txt').write_text(
+    '\n'.join(raw.splitlines()[:900] + tail) + '\n', encoding='utf-8')
+
+# 2) секции + Part с римскими номерами: Поэтика целиком, она невелика.
+raw = fetch.fetch('https://classics.mit.edu/Aristotle/poetics.mb.txt', Path('.cache'))
+Path('tests/fixtures/mit_sections.mb.txt').write_text(raw, encoding='utf-8')
+print('фикстуры записаны')
 EOF
 ```
 
-Открыть получившийся файл и убедиться глазами, что в нём есть строка `BOOK I`,
-строка `1 `, строка `2 ` и хвост `THE END`. Если книга II не попала в первые
-80 строк — увеличить срез до `lines[:900]`, чтобы захватить `BOOK II`.
+Открыть обе и убедиться глазами: в первой есть `BOOK I`, `BOOK II`, строки
+с одинокими `1` и `2`; во второй — `SECTION 1`, `SECTION 2`, `Part I`, `Part XII`.
 
-- [ ] **Шаг 2: Написать падающий тест**
+- [ ] **Шаг 4: Написать падающие тесты**
 
 ```python
 # build/tests/test_parse_mit.py
 from pathlib import Path
 import pytest
-from parse_mit import parse, Chapter, ParseError
+from parse_mit import Chapter, ParseError, parse, roman_to_int
 
-FIXTURE = Path(__file__).parent / "fixtures" / "ne_head.mb.txt"
-RAW = FIXTURE.read_text(encoding="utf-8")
+FIX = Path(__file__).parent / "fixtures"
+BOOKS = (FIX / "mit_books.mb.txt").read_text(encoding="utf-8")
+SECTIONS = (FIX / "mit_sections.mb.txt").read_text(encoding="utf-8")
+
+
+def test_roman_to_int():
+    assert roman_to_int("I") == 1
+    assert roman_to_int("IV") == 4
+    assert roman_to_int("XII") == 12
+    assert roman_to_int("XXVI") == 26
 
 
 def test_extracts_translator():
-    translator, _ = parse(RAW)
+    translator, _ = parse(BOOKS)
     assert translator == "W. D. Ross"
 
 
-def test_first_chapter_starts_correctly():
-    _, chapters = parse(RAW)
+def test_bare_number_style_first_chapter():
+    _, chapters = parse(BOOKS)
     first = chapters[0]
     assert first.book == "I"
     assert first.number == 1
     assert first.text.startswith("Every art and every inquiry")
 
 
+def test_book_resets_chapter_numbering():
+    _, chapters = parse(BOOKS)
+    by_book: dict[str | None, list[int]] = {}
+    for c in chapters:
+        by_book.setdefault(c.book, []).append(c.number)
+    assert "II" in by_book, "фикстура должна захватывать вторую книгу"
+    for nums in by_book.values():
+        assert nums == list(range(1, len(nums) + 1))
+
+
 def test_drops_copyright_tail():
-    _, chapters = parse(RAW)
+    _, chapters = parse(BOOKS)
     joined = "\n".join(c.text for c in chapters)
     assert "Copyright statement" not in joined
     assert "THE END" not in joined
@@ -652,56 +815,65 @@ def test_drops_copyright_tail():
 
 
 def test_reflows_hard_wrapped_lines():
-    _, chapters = parse(RAW)
-    body = chapters[0].text
-    assert "\n" not in body.split("\n\n")[0], "абзац должен быть одной строкой"
+    _, chapters = parse(BOOKS)
+    assert "\n" not in chapters[0].text.split("\n\n")[0]
 
 
-def test_chapter_numbers_are_consecutive_within_book():
-    _, chapters = parse(RAW)
-    by_book: dict[str | None, list[int]] = {}
-    for c in chapters:
-        by_book.setdefault(c.book, []).append(c.number)
-    for nums in by_book.values():
-        assert nums == list(range(1, len(nums) + 1))
+def test_part_style_with_roman_numbers():
+    translator, chapters = parse(SECTIONS)
+    assert translator == "S. H. Butcher"
+    assert [c.number for c in chapters[:3]] == [1, 2, 3]
+    assert chapters[-1].number == 26
+
+
+def test_sections_are_not_books_and_do_not_reset_numbering():
+    _, chapters = parse(SECTIONS)
+    assert all(c.book is None for c in chapters), "SECTION книгой не является"
+    numbers = [c.number for c in chapters]
+    assert numbers == list(range(1, len(numbers) + 1)), \
+        "нумерация идёт сквозь секции непрерывно"
 
 
 def test_stray_number_does_not_open_chapter():
     raw = (
-        "Some Work\nBy Aristotle\n\nTranslated by Nobody\n\n"
-        + "-" * 70
-        + "\n\nBOOK I\n\n1 \n\nfirst chapter text\n\n"
+        "Some Work\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nBOOK I\n\nPart 1 \n\nfirst chapter text\n\n"
         "he counted them: \n\n7 \n\nstill the first chapter\n\n"
-        "2 \n\nsecond chapter text\n\nTHE END\n"
+        "Part 2 \n\nsecond chapter text\n\nTHE END\n"
     )
     _, chapters = parse(raw)
     assert [c.number for c in chapters] == [1, 2]
     assert "still the first chapter" in chapters[0].text
 
 
-def test_work_without_books():
+def test_bare_number_ignored_when_work_uses_parts():
     raw = (
-        "Poetics\nBy Aristotle\n\nTranslated by S. H. Butcher\n\n"
-        + "-" * 70
-        + "\n\n1 \n\nfirst section\n\n2 \n\nsecond section\n\nTHE END\n"
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nPart 1 \n\nтело\n\n2 \n\nэто не глава, а число в тексте\n\n"
+        "Part 2 \n\nвторая\n\nTHE END\n"
     )
-    translator, chapters = parse(raw)
-    assert translator == "S. H. Butcher"
-    assert [c.book for c in chapters] == [None, None]
+    _, chapters = parse(raw)
     assert [c.number for c in chapters] == [1, 2]
+    assert "не глава" in chapters[0].text
 
 
 def test_rejects_text_without_header_rule():
     with pytest.raises(ParseError, match="шапк"):
         parse("Nicomachean Ethics\nBy Aristotle\nno rule line here\n")
+
+
+def test_rejects_text_without_chapters():
+    raw = "W\nBy Aristotle\n\nTranslated by X\n\n" + "-" * 70 + "\n\nтекст\n"
+    with pytest.raises(ParseError, match="глав"):
+        parse(raw)
 ```
 
-- [ ] **Шаг 3: Запустить тест, убедиться что падает**
+- [ ] **Шаг 5: Запустить тесты, убедиться что падают**
 
 Выполнить: `cd build && python -m pytest tests/test_parse_mit.py -v`
 Ожидается: FAIL, `ModuleNotFoundError: No module named 'parse_mit'`
 
-- [ ] **Шаг 4: Написать минимальную реализацию**
+- [ ] **Шаг 6: Написать реализацию**
 
 ```python
 # build/parse_mit.py
@@ -711,8 +883,12 @@ from dataclasses import dataclass
 RULE_RE = re.compile(r"^-{10,}\s*$")
 TRANSLATOR_RE = re.compile(r"^Translated by (.+?)\s*$", re.M)
 BOOK_RE = re.compile(r"^BOOK\s+([IVXLC]+)\s*$")
-CHAPTER_RE = re.compile(r"^(\d+)\s*$")
+SECTION_RE = re.compile(r"^SECTION\s+\d+\s*$")
+PART_RE = re.compile(r"^Part\s+(\d+|[IVXLC]+)\s*$")
+BARE_RE = re.compile(r"^(\d+)\s*$")
 END_RE = re.compile(r"^THE END\s*$")
+
+ROMAN = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
 
 
 class ParseError(Exception):
@@ -724,6 +900,23 @@ class Chapter:
     book: str | None
     number: int
     text: str
+
+
+def roman_to_int(token: str) -> int:
+    total = 0
+    prev = 0
+    for char in reversed(token.upper()):
+        value = ROMAN[char]
+        if value < prev:
+            total -= value
+        else:
+            total += value
+            prev = value
+    return total
+
+
+def _to_int(token: str) -> int:
+    return int(token) if token.isdigit() else roman_to_int(token)
 
 
 def _reflow(lines: list[str]) -> str:
@@ -748,38 +941,52 @@ def parse(raw: str) -> tuple[str | None, list[Chapter]]:
     if rule_at is None:
         raise ParseError("не найден конец шапки: нет строки из дефисов")
 
-    header = "\n".join(lines[:rule_at])
-    m = TRANSLATOR_RE.search(header)
-    translator = m.group(1) if m else None
+    match = TRANSLATOR_RE.search("\n".join(lines[:rule_at]))
+    translator = match.group(1) if match else None
 
     body = lines[rule_at + 1:]
     end_at = next((i for i, l in enumerate(body) if END_RE.match(l)), None)
     if end_at is not None:
         body = body[:end_at]
 
+    # Стиль разметки определяется один раз на всю работу: если есть хоть одна
+    # строка "Part N", голые цифры в тексте главами не считаются.
+    uses_parts = any(PART_RE.match(l) for l in body)
+
+    def chapter_number(line: str) -> int | None:
+        match = PART_RE.match(line)
+        if match:
+            return _to_int(match.group(1))
+        if uses_parts:
+            return None
+        match = BARE_RE.match(line)
+        return int(match.group(1)) if match else None
+
     chapters: list[Chapter] = []
     book: str | None = None
     number: int | None = None
     buf: list[str] = []
-    last_number = 0
+    last = 0
 
     def flush() -> None:
         if number is not None:
             chapters.append(Chapter(book=book, number=number, text=_reflow(buf)))
 
     for line in body:
-        if RULE_RE.match(line):
+        # SECTION — артефакт постраничной разбивки сайта, а не деление текста:
+        # нумерация глав идёт сквозь секции непрерывно.
+        if RULE_RE.match(line) or SECTION_RE.match(line):
             continue
-        bm = BOOK_RE.match(line)
-        if bm:
+        book_match = BOOK_RE.match(line)
+        if book_match:
             flush()
-            book, number, buf, last_number = bm.group(1), None, [], 0
+            book, number, buf, last = book_match.group(1), None, [], 0
             continue
-        cm = CHAPTER_RE.match(line)
-        if cm and int(cm.group(1)) == last_number + 1:
+        candidate = chapter_number(line)
+        if candidate is not None and candidate == last + 1:
             flush()
-            number = int(cm.group(1))
-            last_number = number
+            number = candidate
+            last = candidate
             buf = []
             continue
         if number is not None:
@@ -791,19 +998,18 @@ def parse(raw: str) -> tuple[str | None, list[Chapter]]:
     return translator, chapters
 ```
 
-- [ ] **Шаг 5: Запустить тест, убедиться что проходит**
+- [ ] **Шаг 7: Запустить тесты, убедиться что проходят**
 
-Выполнить: `cd build && python -m pytest tests/test_parse_mit.py -v`
-Ожидается: PASS, 8 тестов
+Выполнить: `cd build && python -m pytest tests/ -v`
+Ожидается: PASS, все тесты пакета.
 
-- [ ] **Шаг 6: Прогнать разбор по всем 29 работам вживую**
+- [ ] **Шаг 8: Живой прогон по двадцати работам MIT**
 
-Выполнить:
 ```bash
 cd build && python - <<'EOF'
 from pathlib import Path
 import fetch, parse_mit, registry
-works = registry.load(Path('works.yaml'))
+works = {k: w for k, w in registry.load(Path('works.yaml')).items() if w.source == 'mit'}
 total = 0
 for slug, w in sorted(works.items()):
     raw = fetch.fetch(w.url, Path('.cache'))
@@ -811,18 +1017,25 @@ for slug, w in sorted(works.items()):
     books = sorted({c.book for c in ch}, key=lambda b: (b is None, b or ''))
     total += len(ch)
     print(f'{slug:34s} глав={len(ch):4d} книг={len(books):2d} пер.={tr}')
-print('всего глав:', total)
+print('работ:', len(works), 'всего глав:', total)
 EOF
 ```
-Ожидается: 29 строк без исключений, суммарно порядка 1200–1600 глав.
-Любая работа с нулём глав или без переводчика — повод посмотреть её файл
-руками, а не подгонять регулярку вслепую.
 
-- [ ] **Шаг 7: Коммит**
+Ожидается: 20 строк без исключений, у каждой работы переводчик найден,
+суммарно порядка 900–1300 глав.
+
+Признаки, по которым останавливаться и разбираться, а не подгонять регулярку:
+ноль глав у какой-либо работы, отсутствие переводчика, число глав меньше числа
+книг. Если расхождение окажется структурным — сообщить со статусом BLOCKED,
+приложив название работы и кусок её разметки.
+
+- [ ] **Шаг 9: Коммит**
 
 ```bash
-git add build/parse_mit.py build/tests/test_parse_mit.py build/tests/fixtures/
-git commit -m "Разбор текстов MIT в главы с проверкой последовательности"
+git add build/parse_mit.py build/tests/test_parse_mit.py build/tests/fixtures/ \
+        build/works.yaml build/tests/test_registry.py build/fetch.py \
+        build/tests/test_fetch.py
+git commit -m "Разбор текстов MIT по фактической разметке и перевод девяти работ на Wikisource"
 ```
 
 ---
