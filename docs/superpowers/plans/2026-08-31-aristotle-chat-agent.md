@@ -2113,6 +2113,9 @@ func Builtin() Config {
 				BaseURL: "https://api.openai.com/v1",
 				Model:   "gpt-5.6",
 				KeyEnv:  "OPENAI_API_KEY",
+				// gpt-5.6-sol — рассуждающая модель: max_tokens объявлен
+				// устаревшим и несовместим с ней, нужен max_completion_tokens.
+				Reasoning: true,
 			},
 			"openrouter": {
 				Kind:    "openai",
@@ -2161,7 +2164,12 @@ func Load(path string) (Config, error) {
 		if p.KeyEnv != "" {
 			cur.KeyEnv = p.KeyEnv
 		}
-		cur.Reasoning = cur.Reasoning || p.Reasoning
+		// Reasoning накладывается только если поле в файле присутствует:
+		// иначе опущенное поле неотличимо от явного false и флаг нельзя
+		// было бы выключить.
+		if p.Reasoning != nil {
+			cur.Reasoning = *p.Reasoning
+		}
 		base.Profiles[name] = cur
 	}
 	return base, nil
@@ -2174,6 +2182,13 @@ func (c Config) Resolve(name string) (Profile, error) {
 	p, ok := c.Profiles[name]
 	if !ok {
 		return Profile{}, fmt.Errorf("неизвестный профиль %q", name)
+	}
+	// Профиль, заведённый пользователем в файле, мог приехать без kind:
+	// без проверки он молча дойдёт до выбора провайдера и упадёт там.
+	if p.Kind != KindAnthropic && p.Kind != KindOpenAI {
+		return Profile{}, fmt.Errorf(
+			"профиль %s: kind должен быть %q или %q, а не %q",
+			name, KindAnthropic, KindOpenAI, p.Kind)
 	}
 	p.Name = name
 	return p, nil
