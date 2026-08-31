@@ -40,7 +40,7 @@ type Config struct {
 
 func Builtin() Config {
 	return Config{
-		Default: "claude",
+		Default: "deepseek",
 		Profiles: map[string]Profile{
 			"claude": {
 				Kind:   KindAnthropic,

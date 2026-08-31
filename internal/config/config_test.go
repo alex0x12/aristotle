@@ -13,8 +13,8 @@ func TestBuiltinHasFourProfiles(t *testing.T) {
 			t.Fatalf("нет встроенного профиля %q", name)
 		}
 	}
-	if c.Default != "claude" {
-		t.Fatalf("Default = %q, ожидался claude", c.Default)
+	if c.Default != "deepseek" {
+		t.Fatalf("Default = %q, ожидался deepseek", c.Default)
 	}
 }
 
@@ -43,7 +43,7 @@ func TestResolveEmptyGivesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Name != "claude" {
+	if p.Name != "deepseek" {
 		t.Fatalf("Name = %q", p.Name)
 	}
 }
