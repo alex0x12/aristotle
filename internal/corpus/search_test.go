@@ -189,3 +189,63 @@ func TestSearchDefaultsKWhenNonPositive(t *testing.T) {
 		t.Errorf("k <= 0 не подставило значение по умолчанию 6: %v", got)
 	}
 }
+
+// writeUnparsableChapter кладёт файл главы, который читается с диска, но не
+// разбирается: без обязательного поля group. Отличие от writeChapter важно —
+// проверяет ветку "read > 0 && parsed == 0" отдельно от "read == 0".
+func writeUnparsableChapter(t *testing.T, root, rel string) {
+	t.Helper()
+	body := "---\nwork: \"W\"\nwork_slug: w\nbook: \"I\"\nchapter: 1\n" +
+		"authenticity: genuine\ntranslator: null\nsource: mit\ncite: \"C\"\n---\n\nтело\n"
+	path := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSearchAllReadButNoneParsedIsError: главы читаются с диска, но ни одна
+// не разбирается (испорченный frontmatter — здесь нет поля group). Это не
+// "неверный корень корпуса" (файлы на месте), а подозрение на то, что
+// корпус собран не тем конвейером или разошёлся со схемой. Тоже ошибка,
+// а не пустая выдача — тот же дефект, что и правило 3, просто этажом ниже.
+func TestSearchAllReadButNoneParsedIsError(t *testing.T) {
+	root := t.TempDir()
+	writeUnparsableChapter(t, root, "ne/i/01.md")
+	writeUnparsableChapter(t, root, "ne/i/02.md")
+
+	s := &Searcher{Collection: "aristotle", Root: root, Run: fakeQmd(`[
+	  {"file":"qmd://aristotle/ne/i/01.md","score":0.9},
+	  {"file":"qmd://aristotle/ne/i/02.md","score":0.8}
+	]`)}
+	hits, err := s.Search(context.Background(), "x", "", 5)
+	if err == nil {
+		t.Fatalf("ожидалась ошибка: главы читаются, но не разбираются; получено %d попаданий", len(hits))
+	}
+}
+
+// TestSearchAllParsedButFilteredIsEmptyNotError: главы читаются и
+// разбираются успешно (подлинные, со всеми обязательными полями), но
+// целиком отсеиваются фильтром по group. Это законная пустота, а не сбой —
+// счётчик разобранных растёт ДО фильтров spurious/group именно ради этого
+// случая. Важнее первого теста: страховка от того, что починка правила 3
+// перегнёт палку и начнёт ошибаться на честном "в этой группе ничего нет".
+func TestSearchAllParsedButFilteredIsEmptyNotError(t *testing.T) {
+	root := t.TempDir()
+	writeChapter(t, root, "ha/i/01.md", "genuine", "biology", "HA I.1")
+	writeChapter(t, root, "ha/i/02.md", "genuine", "biology", "HA I.2")
+
+	s := &Searcher{Collection: "aristotle", Root: root, Run: fakeQmd(`[
+	  {"file":"qmd://aristotle/ha/i/01.md","score":0.9},
+	  {"file":"qmd://aristotle/ha/i/02.md","score":0.8}
+	]`)}
+	hits, err := s.Search(context.Background(), "x", "ethics", 5)
+	if err != nil {
+		t.Fatalf("выдача, целиком отсеянная фильтром по group, не должна давать ошибку: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("получено %d попаданий, ожидалось 0", len(hits))
+	}
+}
