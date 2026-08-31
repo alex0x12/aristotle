@@ -2,4 +2,4 @@ build/.cache/
 build/__pycache__/
 build/tests/__pycache__/
 .pytest_cache/
-aristotle
+/aristotle
