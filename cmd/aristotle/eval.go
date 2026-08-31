@@ -53,8 +53,11 @@ func runEval(path string, session *chat.Session, searcher *corpus.Searcher,
 	report.Finish()
 
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
-	fmt.Printf("\nrecall@6: %d/%d (%.0f%%)\n",
+	fmt.Printf("\nrecall@6 при наивном запросе, одной попыткой: %d/%d (%.0f%%)\n",
 		report.Found, report.Total, report.Recall*100)
+	fmt.Println("это нижняя граница, не оценка системы: вопрос из questions.yaml " +
+		"подаётся в поиск дословно, а агент в работе переформулирует запрос в " +
+		"понятиях корпуса и ищет до четырёх раз за ход")
 	if n := len(durations); n > 0 {
 		fmt.Printf("медиана поиска: %s, худший: %s\n",
 			durations[n/2].Round(time.Millisecond),
