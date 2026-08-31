@@ -3688,6 +3688,21 @@ git commit -m "Нейтральный интерфейс провайдера и
   и внутренний `accumulator` с методами `Add(index int, id, name, argsFragment string)`
   и `Calls() []provider.ToolCall` — вынесен отдельно ради тестируемости.
 
+- [ ] **Шаг 0: Сделать `deepseek` профилем по умолчанию**
+
+У пользователя нет ключа Anthropic API, и из четырёх ключей в окружении задан
+только `DEEPSEEK_API_KEY`. Умолчание `claude` означало бы, что собранный агент
+падает на первом же запуске.
+
+В `internal/config/config.go` заменить `Default: "claude"` на
+`Default: "deepseek"`. Поправить тест `TestBuiltinHasFourProfiles`, который
+проверяет умолчание, и `TestResolveEmptyGivesDefault`, который ждёт `claude`.
+Профили при этом все четыре остаются на месте: ветка Anthropic никуда не
+девается, она включается флагом `--model claude`.
+
+Выполнить: `go test ./internal/config/ -v`
+Ожидается: PASS.
+
 - [ ] **Шаг 1: Написать падающий тест**
 
 ```go
@@ -4041,6 +4056,69 @@ func (s *stream) Close() error          { return s.body.Close() }
 
 Выполнить: `go test ./internal/provider/... -v`
 Ожидается: PASS, все тесты обоих пакетов
+
+- [ ] **Шаг 6: Живая проверка через Deepseek**
+
+Это **единственная ветка провайдера, которую можно проверить живым вызовом**:
+ключ Anthropic отсутствует, а `DEEPSEEK_API_KEY` в окружении задан. Поэтому
+проверка обязательна и от неё зависит доверие ко всему слою провайдеров.
+
+```bash
+mkdir -p .tmp_smoke && cat > .tmp_smoke/main.go <<'EOF'
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/alex0x12/aristotle/internal/config"
+	"github.com/alex0x12/aristotle/internal/provider"
+	"github.com/alex0x12/aristotle/internal/provider/openaicompat"
+)
+
+func main() {
+	p, err := config.Builtin().Resolve("deepseek")
+	if err != nil {
+		panic(err)
+	}
+	cl, err := openaicompat.New(p)
+	if err != nil {
+		panic(err)
+	}
+	st, err := cl.Stream(context.Background(), provider.Request{
+		System:   "Отвечай одним коротким предложением по-русски.",
+		Messages: []provider.Message{{Role: provider.RoleUser, Text: "Назови четыре причины по Аристотелю."}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer st.Close()
+	for st.Next() {
+		if e := st.Event(); e.Kind == provider.EventText {
+			fmt.Print(e.Text)
+		}
+	}
+	fmt.Println()
+	if err := st.Err(); err != nil {
+		panic(err)
+	}
+}
+EOF
+go run ./.tmp_smoke && rm -rf .tmp_smoke
+```
+
+Ожидается: осмысленный русский текст, появляющийся **по мере генерации**,
+а не разом в конце. Если текст приходит одним куском — стриминг не работает,
+и это дефект, а не особенность провайдера.
+
+**Вторая живая проверка, важнее первой: вызов инструмента.** Повтори прогон,
+добавив в запрос `Tools: []provider.ToolDef{provider.SearchCorpusTool()}` и
+задав вопрос, на который модель обязана полезть в корпус («Что ты писал
+о счастье?»). Убедись, что приходит событие `EventToolCall` с непустым
+`Call.Name` и разобранным `Call.Input`. Без этого весь замысел агента
+не работает: инструмент поиска — единственный способ добраться до текстов.
+
+Каталог `.tmp_smoke` в поставку не входит — удали его.
 
 - [ ] **Шаг 6: Коммит**
 
