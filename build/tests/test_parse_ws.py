@@ -65,6 +65,75 @@ NO_HEADINGS = """{{header
 Второй абзац.
 """
 
+# «О возникновении животных», книги II-V: заголовков == нет вовсе, границы
+# глав — голые числа на отдельной строке (проверено на живых данных).
+BARE_NUMBER_PAGE = """{{header
+ | translator = Arthur Platt
+ | section    = Book II
+}}
+
+
+Book II
+
+
+1
+
+THAT the male and the female are the principles of generation.
+
+2
+
+Second chapter of book two.
+
+3
+
+Third chapter of book two.
+
+4
+
+Fourth chapter of book two.
+
+5
+
+Fifth chapter of book two.
+
+6
+
+Sixth chapter of book two.
+
+7
+
+Seventh chapter of book two.
+
+8
+
+Eighth chapter of book two.
+"""
+
+# Ничья: одна книга (уровень 2) и одна глава (уровень 3) на странице.
+TIE_PAGE = """{{header
+ | translator = William Ellis
+}}
+
+== BOOK VIII ==
+
+=== CHAPTER I ===
+
+Music seems to demand a similar mode of expression.
+"""
+
+INTRODUCTION_PAGE = """{{header
+ | translator = X
+}}
+
+== Introduction ==
+
+Вводный текст без номера.
+
+== Conclusion ==
+
+Заключительный текст без номера.
+"""
+
 
 def test_page_title_from_url():
     assert page_title("https://en.wikisource.org/wiki/Politics_(Ellis)") == "Politics (Ellis)"
@@ -123,6 +192,43 @@ def test_page_without_headings_is_one_chapter():
     assert len(chapters) == 1
     assert chapters[0].number == 1
     assert "Второй абзац." in chapters[0].text
+
+
+def test_bare_numbers_are_chapters_when_no_headings_at_all():
+    # Находка ревью: «О возникновении животных», книги II-V не размечены
+    # заголовками == вовсе — только голые числа на отдельной строке.
+    # Без распознавания голых чисел вся книга схлопывалась в одну
+    # 90-килобайтную "главу".
+    _, chapters = parse_page(BARE_NUMBER_PAGE, "II")
+    assert [c.number for c in chapters] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert all(c.book == "II" for c in chapters)
+    assert chapters[0].text.startswith("THAT the male and the female")
+    assert chapters[-1].text == "Eighth chapter of book two."
+
+
+def test_chapter_level_tie_prefers_deeper_level():
+    # Находка ревью: при равном числе заголовков разных уровней должен
+    # побеждать более глубокий — главы всегда глубже книг.
+    assert chapter_level(TIE_PAGE) == 3
+
+
+def test_tie_page_chapter_gets_correct_number_not_book_number():
+    _, chapters = parse_page(TIE_PAGE, "VIII")
+    assert [c.number for c in chapters] == [1], \
+        "глава должна получить номер CHAPTER I (1), а не BOOK VIII (8)"
+    assert chapters[0].book == "VIII"
+    assert "Music seems" in chapters[0].text
+
+
+def test_unnumbered_non_apparatus_heading_uses_sequential_fallback():
+    # Находка ревью: обрыв по любому безномерному заголовку слишком широк —
+    # работы с заголовками-словами (Introduction, Conclusion...) не аппарат,
+    # а обычные главы, и должны нумероваться по порядку, не обрывать разбор.
+    _, chapters = parse_page(INTRODUCTION_PAGE, None)
+    assert [c.number for c in chapters] == [1, 2]
+    assert chapters[0].text == "Вводный текст без номера."
+    assert chapters[1].text == "Заключительный текст без номера."
+    assert "==" not in "\n".join(c.text for c in chapters)
 
 
 def test_clean_strips_nested_templates():

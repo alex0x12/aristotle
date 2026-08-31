@@ -12,7 +12,16 @@ DELAY = 1.0  # API отвечает 429 на частые запросы
 TRANSLATOR_RE = re.compile(r"^\s*\|\s*translator\s*=\s*(.+?)\s*$", re.M)
 HEADING_RE = re.compile(r"^(=+)\s*(.+?)\s*=+\s*$")
 NUMBER_RE = re.compile(r"(\d+|[IVXLC]+)\s*$")
+BARE_NUMBER_RE = re.compile(r"^\s*(\d+)\s*$")
 BOOK_SUB_RE = re.compile(r"/Book\s+(\d+|[IVXLC]+)\s*$", re.I)
+
+# Служебные разделы аппарата, на которых разбор обрывается: заголовок этого
+# уровня без номера здесь означает конец текста, а не главу без номера.
+# Сравнение без учёта регистра.
+APPARATUS_HEADINGS = {
+    "external links", "references", "notes", "see also",
+    "bibliography", "footnotes", "source", "sources",
+}
 REF_RE = re.compile(r"<ref[^>]*>.*?</ref>|<ref[^>]*/>", re.S | re.I)
 TAG_RE = re.compile(r"</?[a-z][^>]*>", re.I)
 DROP_LINK_RE = re.compile(r"\[\[(?:Category|File|Image|[a-z]{2,3}):[^\]]*\]\]", re.I)
@@ -69,7 +78,9 @@ def chapter_level(raw: str) -> int | None:
     """Уровень заголовка, которым размечены главы.
 
     У разных работ он разный: у «Политики» глава — третий уровень, а второй
-    занят книгой. Берём тот уровень, которого на странице больше всего.
+    занят книгой. Берём тот уровень, которого на странице больше всего; при
+    равенстве — более глубокий, потому что главы всегда глубже книг (книга
+    из одной главы иначе отдала бы уровень книги, а не главы).
     """
     counts: dict[int, int] = {}
     for line in raw.splitlines():
@@ -79,7 +90,7 @@ def chapter_level(raw: str) -> int | None:
             counts[level] = counts.get(level, 0) + 1
     if not counts:
         return None
-    return max(counts, key=lambda level: (counts[level], -level))
+    return max(counts, key=lambda level: (counts[level], level))
 
 
 def book_subpages(title: str, get) -> list[tuple[str, str]]:
@@ -100,12 +111,8 @@ def _reflow(lines: list[str]) -> str:
     return re.sub(r"\n{3,}", "\n\n", body)
 
 
-def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
-    match = TRANSLATOR_RE.search(raw)
-    translator = match.group(1) if match else None
-
-    level = chapter_level(raw)
-    lines = raw.splitlines()
+def _heading_chapters(lines: list[str], level: int,
+                       book: str | None) -> list[Chapter]:
     chapters: list[Chapter] = []
     number: int | None = None
     buf: list[str] = []
@@ -121,14 +128,22 @@ def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
                 continue  # заголовок другого уровня — не граница главы
             found = NUMBER_RE.search(heading.group(2))
             if found is None:
-                # Заголовок того же уровня, что и главы, но без номера —
-                # это не глава, а служебный раздел в конце страницы
-                # (External links, Notes и т.п.). Дальше текста уже нет,
-                # только аппарат; заканчиваем разбор, как parse_mit
-                # обрывает тело на строке "THE END".
+                title = heading.group(2).strip().lower()
+                if title in APPARATUS_HEADINGS:
+                    # Служебный раздел в конце страницы (External links,
+                    # Notes и т.п.) — дальше текста уже нет, только аппарат;
+                    # заканчиваем разбор, как parse_mit обрывает тело на
+                    # строке "THE END".
+                    flush()
+                    number = None
+                    break
+                # Заголовок нужного уровня без номера, но не аппарат —
+                # обычная глава без номера (Introduction, Conclusion...),
+                # нумеруем по порядку.
                 flush()
-                number = None
-                break
+                number = len(chapters) + 1
+                buf = []
+                continue
             flush()
             number = _to_int(found.group(1))
             buf = []
@@ -136,6 +151,51 @@ def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
         if number is not None:
             buf.append(line)
     flush()
+    return chapters
+
+
+def _bare_number_chapters(lines: list[str],
+                           book: str | None) -> list[Chapter]:
+    """Главы по голым числам на отдельной строке — для страниц без единого
+    заголовка ==, как книги II-V "О возникновении животных". Тот же приём,
+    что и в parse_mit: номер принимается только если он на единицу больше
+    предыдущего, иначе случайное число в тексте открыло бы главу."""
+    chapters: list[Chapter] = []
+    number: int | None = None
+    buf: list[str] = []
+    last = 0
+
+    def flush() -> None:
+        if number is not None:
+            chapters.append(Chapter(book=book, number=number, text=_reflow(buf)))
+
+    for line in lines:
+        match = BARE_NUMBER_RE.match(line)
+        if match and int(match.group(1)) == last + 1:
+            flush()
+            number = last = int(match.group(1))
+            buf = []
+            continue
+        if number is not None:
+            buf.append(line)
+    flush()
+    return chapters
+
+
+def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
+    match = TRANSLATOR_RE.search(raw)
+    translator = match.group(1) if match else None
+
+    level = chapter_level(raw)
+    lines = raw.splitlines()
+
+    # Порядок распознавания границ главы: сначала заголовки нужного уровня;
+    # если заголовков нет вовсе — голые числа на отдельной строке; и только
+    # если нет ни того ни другого — вся страница одной главой.
+    if level is not None:
+        chapters = _heading_chapters(lines, level, book)
+    else:
+        chapters = _bare_number_chapters(lines, book)
 
     if not chapters:
         body = _reflow(lines)
