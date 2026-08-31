@@ -291,12 +291,20 @@ slug, человекочитаемое имя, `group`, `authenticity`, пере
 
 ```
 >> cite: Nicomachean Ethics I.7
->> en: the good of man turns out to be an activity of soul in accordance with virtue
+>> en: human good turns out to be activity of soul in accordance with virtue
 >> ru: благо человека есть деятельность души сообразно добродетели
 ```
 
 CLI рендерит врезку с русским текстом и ссылкой; подпись — «пер. с англ. Росса»,
 а не «Аристотель, дословно». Английский оригинал доступен по команде `/src`.
+
+Строка `en:` выше — **настоящий текст главы**, а не пересказ по памяти.
+Первая редакция спеки приводила здесь `the good of man turns out to be an
+activity of soul…`; у Росса стоит `human good turns out to be activity of
+soul…` — без артикля и без «of man». Прогон показал, что образец из спеки
+собственная сверка **отвергает**, а настоящий текст принимает. Механизм
+поймал своего автора на первом же примере, и это лучшее доказательство,
+что он нужен.
 
 ### 5.2 Сверка цитат постфактум
 
