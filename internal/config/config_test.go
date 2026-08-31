@@ -20,11 +20,21 @@ func TestBuiltinHasFourProfiles(t *testing.T) {
 
 func TestClaudeProfileDefaults(t *testing.T) {
 	p := Builtin().Profiles["claude"]
-	if p.Kind != "anthropic" {
-		t.Fatalf("Kind = %q", p.Kind)
+	if p.Kind != KindAnthropic {
+		t.Fatalf("Kind = %q, ожидался %q", p.Kind, KindAnthropic)
 	}
 	if p.Model != "claude-opus-5" {
 		t.Fatalf("Model = %q, ожидался claude-opus-5", p.Model)
+	}
+}
+
+func TestOpenAIProfileHasReasoning(t *testing.T) {
+	p := Builtin().Profiles["openai"]
+	if p.Kind != KindOpenAI {
+		t.Fatalf("Kind = %q, ожидался %q", p.Kind, KindOpenAI)
+	}
+	if !p.Reasoning {
+		t.Fatalf("Reasoning = %v, ожидалось true (gpt-5.6 — рассуждающая модель)", p.Reasoning)
 	}
 }
 
@@ -71,8 +81,109 @@ func TestLoadOverridesModel(t *testing.T) {
 	if got := c.Profiles["claude"].Model; got != "claude-sonnet-5" {
 		t.Fatalf("Model = %q", got)
 	}
-	if got := c.Profiles["claude"].Kind; got != "anthropic" {
+	if got := c.Profiles["claude"].Kind; got != KindAnthropic {
 		t.Fatalf("Kind затёрт: %q", got)
+	}
+}
+
+func TestLoadOverridesModelKeepsBaseURLAndKeyEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"profiles":{"openai":{"model":"gpt-5.5"}}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openai := c.Profiles["openai"]
+	if got := openai.Model; got != "gpt-5.5" {
+		t.Fatalf("Model = %q, ожидалось gpt-5.5", got)
+	}
+	if got := openai.BaseURL; got != "https://api.openai.com/v1" {
+		t.Fatalf("BaseURL затёрт: %q", got)
+	}
+	if got := openai.KeyEnv; got != "OPENAI_API_KEY" {
+		t.Fatalf("KeyEnv затёрт: %q", got)
+	}
+}
+
+func TestLoadNewProfileFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"profiles":{"custom":{"kind":"openai","base_url":"https://custom.api.com","model":"custom-model","key_env":"CUSTOM_KEY"}}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	custom, ok := c.Profiles["custom"]
+	if !ok {
+		t.Fatal("профиль custom не создан из файла")
+	}
+	if got := custom.Kind; got != KindOpenAI {
+		t.Fatalf("Kind = %q, ожидался %q", got, KindOpenAI)
+	}
+	if got := custom.Model; got != "custom-model" {
+		t.Fatalf("Model = %q", got)
+	}
+	// Проверяем, что профиль разрешается
+	if _, err := c.Resolve("custom"); err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+}
+
+func TestLoadNewProfileMissingKindFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"profiles":{"bad":{"model":"some-model","key_env":"SOME_KEY"}}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Загрузка должна пройти, но Resolve должна дать ошибку
+	if _, err := c.Resolve("bad"); err == nil {
+		t.Fatal("ожидалась ошибка при отсутствии kind")
+	}
+}
+
+func TestLoadReasoningFalseOverridesTrue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"profiles":{"openai":{"reasoning":false}}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openai := c.Profiles["openai"]
+	if openai.Reasoning {
+		t.Fatalf("Reasoning = %v, ожидалось false (явный false должен выключить встроенный true)", openai.Reasoning)
+	}
+}
+
+func TestLoadReasoningAbsentDoesNotChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"profiles":{"openai":{"model":"gpt-5.5"}}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openai := c.Profiles["openai"]
+	if !openai.Reasoning {
+		t.Fatalf("Reasoning = %v, ожидалось true (отсутствие поля должно сохранить встроенное значение)", openai.Reasoning)
 	}
 }
 
