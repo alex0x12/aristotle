@@ -11,7 +11,7 @@ categories:
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/categories.mb.txt
-  year: 1928
+  year: 1926
 on-dreams:
   title: On Dreams
   group: psychology
@@ -34,14 +34,14 @@ generation-and-corruption:
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/gener_corr.mb.txt
-  year: 1930
+  year: 1922
 on-the-heavens:
   title: On the Heavens
   group: physics
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/heavens.mb.txt
-  year: 1930
+  year: 1922
 history-of-animals:
   title: The History of Animals
   group: biology
@@ -55,7 +55,7 @@ on-interpretation:
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/interpretation.mb.txt
-  year: 1928
+  year: 1926
 longevity-and-shortness-of-life:
   title: On Longevity and Shortness of Life
   group: psychology
@@ -136,14 +136,14 @@ posterior-analytics:
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/posterior.mb.txt
-  year: 1928
+  year: 1926
 prior-analytics:
   title: Prior Analytics
   group: logic
   authenticity: genuine
   source: mit
   url: https://classics.mit.edu/Aristotle/prior.mb.txt
-  year: 1928
+  year: 1926
 on-prophesying-by-dreams:
   title: On Prophesying by Dreams
   group: psychology
