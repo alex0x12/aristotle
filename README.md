@@ -42,6 +42,15 @@ go build -o aristotle ./cmd/aristotle
 ./aristotle
 ```
 
+Либо через `make`:
+
+```
+make build && make run
+make help          # все цели
+make check         # форматирование, vet и все тесты
+make eval-recall   # recall поиска, без обращений к модели
+```
+
 Запускать нужно из корня репозитория (бинарник ищет `persona/` и `corpus/`
 рядом с собой) либо с флагом `-root /путь/до/aristotle` из любого места.
 
