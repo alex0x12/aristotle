@@ -3,7 +3,7 @@ import re
 import time
 from urllib.parse import quote, unquote
 
-from parse_mit import Chapter, ParseError, roman_to_int
+from parse_mit import Chapter, END_RE, ParseError, roman_to_int
 
 API = "https://en.wikisource.org/w/api.php"
 RAW = "https://en.wikisource.org/w/index.php"
@@ -219,8 +219,17 @@ def parse_page(raw: str, book: str | None) -> tuple[str | None, list[Chapter]]:
     match = TRANSLATOR_RE.search(raw)
     translator = match.group(1) if match else None
 
-    level = chapter_level(raw)
     lines = raw.splitlines()
+    # "THE END" — тот же хвостовой артефакт печатного издания, что и в
+    # parse_mit.py (см. END_RE там), скопированный в вики-текст буквально.
+    # Без отсечения он утекает в тело последней главы страницы — как в
+    # movement-of-animals/11.md. Обрезаем до вычисления уровня заголовков и
+    # до разбора на главы, тем же приёмом, что и в parse_mit.parse.
+    end_at = next((i for i, l in enumerate(lines) if END_RE.match(l)), None)
+    if end_at is not None:
+        lines = lines[:end_at]
+
+    level = chapter_level("\n".join(lines))
 
     # Порядок распознавания границ главы: сначала заголовки нужного уровня;
     # если заголовков нет вовсе — голые числа на отдельной строке; если и

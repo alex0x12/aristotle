@@ -169,6 +169,48 @@ func TestSourcesMarksUnverifiedExcerpt(t *testing.T) {
 // пометки: /src показывал бы такую выдержку как чистый источник, хотя она
 // вообще не проверялась. Теперь сверка делается на En, и /src обязан нести
 // правильную пометку даже без ru.
+// TestCiteAfterEnInvalidatesVerification закрывает дефект итогового ревью:
+// ссылка, пришедшая ПОСЛЕ выдержки (cite/en/cite/ru), подменяла адрес без
+// повторной сверки. Сверка на первый cite (Nicomachean Ethics I.7) была
+// верной, но врезка на Ru обязана печататься под ВТОРЫМ, уже несверенным
+// адресом (Metaphysics XII.7) — а значит с пометкой, а не молча.
+func TestCiteAfterEnInvalidatesVerification(t *testing.T) {
+	chapters := []corpus.Chapter{
+		{Cite: "Nicomachean Ethics I.7", Text: "an activity of soul in accordance with virtue"},
+	}
+	out, _ := printed([]Event{
+		{Kind: Cite, Text: "Nicomachean Ethics I.7"},
+		{Kind: En, Text: "an activity of soul in accordance with virtue"},
+		{Kind: Cite, Text: "Metaphysics XII.7"}, // подмена адреса после выдержки
+		{Kind: Ru, Text: "деятельность души сообразно добродетели"},
+	}, chapters)
+	if !strings.Contains(out, "[!] нет в выдержках") {
+		t.Fatalf("врезка под подменённым адресом должна быть помечена:\n%s", out)
+	}
+	if !strings.Contains(out, "Metaphysics XII.7") {
+		t.Fatalf("врезка обязана показывать последний заявленный адрес:\n%s", out)
+	}
+}
+
+// TestEnglishExcerptWithoutCiteIsInSources закрывает вторую половину того же
+// дефекта: en без предшествующего cite не попадал в /src вовсе, хотя на
+// экране (Ru) он печатается с пометкой [!]. /src обязан показывать её тоже —
+// с пометкой и без адреса.
+func TestEnglishExcerptWithoutCiteIsInSources(t *testing.T) {
+	chapters := []corpus.Chapter{{Cite: "NE I.7", Text: "an activity of soul"}}
+	_, p := printed([]Event{
+		{Kind: En, Text: "an activity of soul"},
+		{Kind: Ru, Text: "деятельность души"},
+	}, chapters)
+	src := p.Sources()
+	if len(src) != 1 {
+		t.Fatalf("en без cite обязан попасть в /src: %+v", src)
+	}
+	if !strings.Contains(src[0], "[!]") {
+		t.Fatalf("en без cite не может быть подтверждён, должна быть пометка: %+v", src)
+	}
+}
+
 func TestSourcesVerifiesOnEnEvenWithoutRu(t *testing.T) {
 	chapters := []corpus.Chapter{{Cite: "NE I.7", Text: "an activity of soul"}}
 

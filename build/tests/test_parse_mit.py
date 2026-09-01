@@ -231,6 +231,44 @@ def test_single_stray_part_line_does_not_flip_bare_number_style():
     assert "second chapter" in chapters[1].text
 
 
+def test_lettered_continuation_merges_into_earlier_chapter():
+    # Как в history-of-animals IX: вторая половина главы 1 физически
+    # оказывается в исходнике ПОСЛЕ главы 2, под голым маркером "1B" (без
+    # слова "Part") вместо повторного "Part 1". Раньше распознавание
+    # голых номеров было полностью выключено для part-стиля, "1B" не
+    # совпадал ни с чем и оседал текстом главы 2 вместе с самой строкой
+    # "1B". Довесок обязан вернуться в главу 1, а строка-маркер — исчезнуть.
+    raw = (
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nPart 1 \n\nhens change when they win a fight\n\n"
+        "Part 2 \n\ncastration changes voice and size\n\n"
+        "1B \n\nbirds change plumage with the season\n\nTHE END\n"
+    )
+    _, chapters = parse(raw)
+    assert [c.number for c in chapters] == [1, 2]
+    assert chapters[0].text == (
+        "hens change when they win a fight\n\n"
+        "birds change plumage with the season"
+    )
+    assert chapters[1].text == "castration changes voice and size"
+    assert "1B" not in chapters[1].text
+    assert "1B" not in chapters[0].text
+
+
+def test_lettered_continuation_without_matching_chapter_is_left_alone():
+    # Страховка: буквенный довесок, для которого в этой книге нет уже
+    # закрытой главы с таким номером, — не довесок, а случайная строка
+    # (например, номер страницы или ссылка). Прежнее поведение сохраняется:
+    # строка остаётся в теле текущей главы, ничего не теряется и не путается.
+    raw = (
+        "W\nBy Aristotle\n\nTranslated by Nobody\n\n" + "-" * 70 +
+        "\n\nPart 1 \n\nfirst chapter\n\n9Z\n\nPart 2 \n\nsecond chapter\n\nTHE END\n"
+    )
+    _, chapters = parse(raw)
+    assert [c.number for c in chapters] == [1, 2]
+    assert "9Z" in chapters[0].text
+
+
 def test_rejects_text_without_header_rule():
     with pytest.raises(ParseError, match="шапк"):
         parse("Nicomachean Ethics\nBy Aristotle\nno rule line here\n")

@@ -244,14 +244,55 @@ def test_plain_text_part_markers_are_chapters():
 
 
 def test_plain_text_part_markers_require_sequential_numbers():
-    # Одна случайная строка прозы вида "Part 5 ..." без предшествующих
-    # "Part 1".."Part 4" не должна открывать главу.
+    # Строка-маркер "Part 5" САМА ПО СЕБЕ (целой строкой, как настоящий
+    # маркер PART_LINE_RE), но без предшествующих "Part 1".."Part 4", не
+    # должна открывать главу номер 5 — а значит должна остаться внутри
+    # единственной запасной главы вместе со своим текстом.
+    #
+    # Раньше вход этого теста был встроен в прозу ("...mentioning Part 5
+    # of a different work") — PART_LINE_RE требует, чтобы строка была
+    # маркером ЦЕЛИКОМ, поэтому такая строка не совпадала с регулярным
+    # выражением вообще, ещё до проверки последовательности: тест проходил
+    # по причине, не имеющей отношения к защите от разрыва номеров, и
+    # оставался зелёным, даже если защиту (сравнение с last + 1) убрать.
     raw = ("{{header | translator = X }}\n\n"
-           "Some introductory text mentioning Part 5 of a different work.\n\n"
-           "More text.\n")
+           "Part 5\n{{dhr}}\n"
+           "This text must not become chapter 5: Part 1..4 never appeared.\n")
     _, chapters = parse_page(raw, None)
     assert len(chapters) == 1
+    assert chapters[0].number == 1
     assert "Part 5" in chapters[0].text
+
+
+def test_drops_the_end_tail():
+    # Как в movement-of-animals/11.md: печатное "THE END" копируется в
+    # вики-текст буквально, следом обычно идут {{rule}}, <references/> и
+    # межъязыковые ссылки. parse_mit.py отсекает такой хвост (END_RE) —
+    # parse_ws.py раньше этого не делал, и "THE END" утекало в тело
+    # последней главы страницы.
+    raw = """{{header
+ | translator = A. S. L. Farquharson
+}}
+
+== 1 ==
+
+first chapter
+
+== 2 ==
+
+second chapter
+
+THE END
+
+{{rule}}
+<references/>
+
+[[el:Foo]]
+"""
+    _, chapters = parse_page(raw, None)
+    joined = "\n".join(c.text for c in chapters)
+    assert "THE END" not in joined
+    assert chapters[-1].text == "second chapter"
 
 
 def test_chapter_level_tie_prefers_deeper_level():

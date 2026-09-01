@@ -44,6 +44,16 @@ func (p *Printer) Handle(ev Event, chapters []corpus.Chapter) {
 		fmt.Fprintln(p.Out, ev.Text)
 
 	case Cite:
+		// Если выдержка уже накоплена (lastEn не пуст) и модель прислала
+		// новый адрес до ru, сверка, сделанная на En, устарела: она
+		// проверяла текст против СТАРОГО адреса, а печататься он будет
+		// под новым. Пересверять здесь нечем — новая ссылка может вообще
+		// не входить в chapters, — поэтому честнее всего снять
+		// подтверждённость: врезка на Ru получит пометку, вместо того
+		// чтобы молча унаследовать результат сверки по чужому адресу.
+		if p.lastEn != "" {
+			p.lastVerified = false
+		}
 		p.lastCite = ev.Text
 
 	case En:
@@ -55,13 +65,18 @@ func (p *Printer) Handle(ev Event, chapters []corpus.Chapter) {
 		// в /src как чистый источник. Во-вторых, /src должен показывать
 		// пометку [!] так же честно, как врезка.
 		p.lastVerified = VerifyInChapter(ev.Text, p.lastCite, chapters)
+		// Строка идёт в sources всегда, даже без cite (en без
+		// предшествующего cite): иначе такая выдержка видна на экране,
+		// на Ru, с пометкой [!] (сверка не может её подтвердить без
+		// адреса) — но исчезает из /src, как будто её и не было.
+		line := ev.Text
 		if p.lastCite != "" {
-			line := fmt.Sprintf("%s — %s", p.lastCite, ev.Text)
-			if !p.lastVerified {
-				line += " " + p.paint(red, "[!]")
-			}
-			p.sources = append(p.sources, line)
+			line = fmt.Sprintf("%s — %s", p.lastCite, ev.Text)
 		}
+		if !p.lastVerified {
+			line += " " + p.paint(red, "[!]")
+		}
+		p.sources = append(p.sources, line)
 
 	case Ru:
 		// Врезка по-прежнему печатается на Ru; сверка при этом уже сделана

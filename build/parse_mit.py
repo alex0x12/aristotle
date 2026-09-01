@@ -8,6 +8,12 @@ SECTION_RE = re.compile(r"^SECTION\s+\d+\s*$")
 PART_RE = re.compile(r"^Part\s+(\d+|[IVXLC]+)\s*(.*)$")
 BARE_RE = re.compile(r"^(\d+)\s*$")
 END_RE = re.compile(r"^THE END\s*$")
+# Буквенный довесок вроде "49B" (history-of-animals IX): вторая половина
+# главы, физически оказавшаяся в исходнике ПОСЛЕ следующей по номеру главы
+# ("Part 49" ... "Part 50" ... "49B"). Не путать с обычным голым числом —
+# тут всегда есть буквенный суффикс, поэтому test_bare_number_ignored_when_
+# work_uses_parts (мимо этой строки, там довесков нет) не задет.
+CONT_RE = re.compile(r"^(\d+)[A-Z]\s*$")
 
 ROMAN = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
 
@@ -152,9 +158,22 @@ def parse(raw: str) -> tuple[str | None, list[Chapter]]:
     number: int | None = None
     buf: list[str] = []
     last = 0
+    # merge_into — индекс в chapters, куда нужно ДОПИСАТЬ текущий буфер,
+    # а не завести под ним новую главу: используется, когда буквенный
+    # довесок (CONT_RE, "49B") возвращает текст в уже закрытую главу.
+    merge_into: int | None = None
 
     def flush() -> None:
-        if number is not None:
+        nonlocal merge_into
+        if merge_into is not None:
+            addition = _reflow(buf)
+            if addition:
+                old = chapters[merge_into]
+                chapters[merge_into] = Chapter(
+                    book=old.book, number=old.number,
+                    text=old.text + "\n\n" + addition)
+            merge_into = None
+        elif number is not None:
             chapters.append(Chapter(book=book, number=number, text=_reflow(buf)))
 
     for line in body:
@@ -167,6 +186,23 @@ def parse(raw: str) -> tuple[str | None, list[Chapter]]:
             flush()
             book, number, buf, last = book_match.group(1), None, [], 0
             continue
+
+        # Буквенный довесок вроде "49B": срабатывает только в part-стиле и
+        # только если номер перед буквой уже был закрытой главой в этой же
+        # книге — иначе это не довесок, а случайная строка, и её лучше
+        # оставить как есть (текущему поведению, buf текущей главы).
+        if uses_parts:
+            cont = CONT_RE.match(line)
+            if cont:
+                target = _to_int(cont.group(1))
+                idx = next((i for i, c in enumerate(chapters)
+                            if c.book == book and c.number == target), None)
+                if idx is not None:
+                    flush()
+                    number, buf = None, []
+                    merge_into = idx
+                    continue
+
         matched = chapter_match(line)
         if matched is not None and matched[0] == last + 1:
             candidate, leftover = matched
@@ -179,7 +215,7 @@ def parse(raw: str) -> tuple[str | None, list[Chapter]]:
             # если сразу за ним идёт пустая строка.
             buf = [leftover] if leftover else []
             continue
-        if number is not None:
+        if number is not None or merge_into is not None:
             buf.append(line)
 
     flush()

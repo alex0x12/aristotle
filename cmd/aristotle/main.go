@@ -61,6 +61,15 @@ func profileNames(cfg config.Config) []string {
 // resumeMessages превращает записи истории в сообщения провайдера. Роли,
 // которых чат не понимает (не "user" и не "assistant" — например, битая
 // запись с пустой ролью), пропускаются, а не роняют восстановление целиком.
+// Запись ассистента с пустым текстом тоже пропускается: это след оборванного
+// хода (ошибка провайдера, Ctrl-C посреди ответа), а не настоящая реплика —
+// сообщение без содержимого провайдер не примет.
+//
+// История обрывается репликой пользователя после ЛЮБОЙ ошибки провайдера
+// или Ctrl-C — то есть как раз в главном случае, ради которого возобновляют:
+// вопрос записан, ответ — нет. Хвостовые записи с ролью user, оставшиеся без
+// ответа ассистента, поэтому отбрасываются: иначе следующий ход дописывает
+// вторую подряд реплику user, а API такое отвергает.
 func resumeMessages(records []chat.Record) []provider.Message {
 	msgs := make([]provider.Message, 0, len(records))
 	for _, rec := range records {
@@ -69,11 +78,17 @@ func resumeMessages(records []chat.Record) []provider.Message {
 		case "user":
 			role = provider.RoleUser
 		case "assistant":
+			if rec.Text == "" {
+				continue
+			}
 			role = provider.RoleAssistant
 		default:
 			continue
 		}
 		msgs = append(msgs, provider.Message{Role: role, Text: rec.Text})
+	}
+	for len(msgs) > 0 && msgs[len(msgs)-1].Role == provider.RoleUser {
+		msgs = msgs[:len(msgs)-1]
 	}
 	return msgs
 }

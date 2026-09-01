@@ -19,10 +19,11 @@ func TestResumeMessagesRestoresRoles(t *testing.T) {
 		{Time: time.Now(), Role: "user", Text: "что такое счастье"},
 		{Time: time.Now(), Role: "assistant", Text: "деятельность души"},
 		{Time: time.Now(), Role: "user", Text: "и что из этого следует?"},
+		{Time: time.Now(), Role: "assistant", Text: "стало быть, счастье — дело"},
 	}
 	got := resumeMessages(records)
-	if len(got) != 3 {
-		t.Fatalf("resumeMessages вернул %d сообщений, ожидалось 3", len(got))
+	if len(got) != 4 {
+		t.Fatalf("resumeMessages вернул %d сообщений, ожидалось 4", len(got))
 	}
 	want := []struct {
 		role provider.Role
@@ -31,6 +32,7 @@ func TestResumeMessagesRestoresRoles(t *testing.T) {
 		{provider.RoleUser, "что такое счастье"},
 		{provider.RoleAssistant, "деятельность души"},
 		{provider.RoleUser, "и что из этого следует?"},
+		{provider.RoleAssistant, "стало быть, счастье — дело"},
 	}
 	for i, w := range want {
 		if got[i].Role != w.role || got[i].Text != w.text {
@@ -39,15 +41,66 @@ func TestResumeMessagesRestoresRoles(t *testing.T) {
 	}
 }
 
+// TestResumeMessagesDropsTrailingUnansweredUser закрывает находку итогового
+// ревью: история обрывается репликой user после ЛЮБОЙ ошибки провайдера или
+// Ctrl-C — главный случай, ради которого вообще возобновляют беседу.
+// Восстановленные сообщения не должны заканчиваться ролью user: следующий
+// ход дописал бы вторую подряд реплику user, а API такое отвергает.
+func TestResumeMessagesDropsTrailingUnansweredUser(t *testing.T) {
+	records := []chat.Record{
+		{Role: "user", Text: "что такое счастье"},
+		{Role: "assistant", Text: "деятельность души"},
+		{Role: "user", Text: "оборванный вопрос без ответа"},
+	}
+	got := resumeMessages(records)
+	if len(got) != 2 {
+		t.Fatalf("resumeMessages вернул %d сообщений, ожидалось 2 (хвост без ответа отброшен): %+v", len(got), got)
+	}
+	if got[len(got)-1].Role != provider.RoleAssistant {
+		t.Fatalf("последнее сообщение должно быть от assistant, получено %+v", got[len(got)-1])
+	}
+}
+
+// TestResumeMessagesDropsAllLeadingIfNeverAnswered: вся история — один
+// незавершённый ход (первый же вопрос оборвался ошибкой). Результат должен
+// быть пуст, а не одно висящее сообщение user.
+func TestResumeMessagesDropsAllLeadingIfNeverAnswered(t *testing.T) {
+	records := []chat.Record{{Role: "user", Text: "единственный вопрос"}}
+	got := resumeMessages(records)
+	if len(got) != 0 {
+		t.Fatalf("resumeMessages = %+v, ожидалась пустая история", got)
+	}
+}
+
+// TestResumeMessagesSkipsEmptyAssistantText: запись ассистента с пустым
+// текстом (тот же оборванный ход) не должна попадать в историю как
+// сообщение без содержимого — она пропускается, как и битая роль.
+func TestResumeMessagesSkipsEmptyAssistantText(t *testing.T) {
+	records := []chat.Record{
+		{Role: "user", Text: "что такое счастье"},
+		{Role: "assistant", Text: ""},
+		{Role: "user", Text: "повтори"},
+		{Role: "assistant", Text: "деятельность души"},
+	}
+	got := resumeMessages(records)
+	if len(got) != 3 {
+		t.Fatalf("resumeMessages = %+v, ожидалось 3 сообщения (пустой ответ пропущен)", got)
+	}
+	if got[0].Text != "что такое счастье" || got[1].Text != "повтори" || got[2].Text != "деятельность души" {
+		t.Fatalf("resumeMessages = %+v", got)
+	}
+}
+
 func TestResumeMessagesSkipsUnknownRoles(t *testing.T) {
 	records := []chat.Record{
 		{Role: "user", Text: "х"},
 		{Role: "", Text: "битая запись"},
 		{Role: "system", Text: "тоже не наша роль"},
+		{Role: "assistant", Text: "ответ"},
 	}
 	got := resumeMessages(records)
-	if len(got) != 1 || got[0].Text != "х" {
-		t.Fatalf("resumeMessages = %+v, ожидалась только одна запись user", got)
+	if len(got) != 2 || got[0].Text != "х" || got[1].Text != "ответ" {
+		t.Fatalf("resumeMessages = %+v, ожидались только записи user и assistant", got)
 	}
 }
 
