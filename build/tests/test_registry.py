@@ -1,6 +1,6 @@
 from pathlib import Path
 import pytest
-from registry import load, Work, RegistryError
+from registry import GROUPS, load, load_manifest, Manifest, Work, RegistryError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "works_ok.yaml"
 
@@ -90,3 +90,58 @@ def test_production_registry_has_year_for_every_work():
     assert all(w.year.isdigit() for w in works.values()), \
         "для всех 29 работ год установлен как число; текстовая заглушка " \
         "('год не установлен') сейчас не используется ни для одной работы"
+
+
+POETICS = (
+    "poetics:\n"
+    "  title: Poetics\n"
+    "  group: {group}\n"
+    "  authenticity: genuine\n"
+    "  source: mit\n"
+    "  url: https://classics.mit.edu/Aristotle/poetics.mb.txt\n"
+)
+
+
+def test_groups_come_from_caller(tmp_path):
+    reg = tmp_path / "works.yaml"
+    reg.write_text(POETICS.format(group="stoic-ethics"), encoding="utf-8")
+    works = load(reg, frozenset({"stoic-ethics"}))
+    assert works["poetics"].group == "stoic-ethics"
+    with pytest.raises(RegistryError, match="group"):
+        load(reg)                                   # по умолчанию — группы Аристотеля
+
+
+def test_default_groups_unchanged(tmp_path):
+    reg = tmp_path / "works.yaml"
+    reg.write_text(POETICS.format(group="rhetoric-poetics"), encoding="utf-8")
+    assert load(reg)["poetics"].group == "rhetoric-poetics"
+    assert "rhetoric-poetics" in GROUPS
+
+
+def test_manifest_loads(tmp_path):
+    m = tmp_path / "philosopher.yaml"
+    m.write_text(
+        "name: Эпиктет\nname_en: Epictetus\nyears: \"ок. 50 – ок. 135\"\n"
+        "groups: [ethics, logic]\n", encoding="utf-8")
+    assert load_manifest(m) == Manifest(
+        name="Эпиктет", name_en="Epictetus",
+        groups=frozenset({"ethics", "logic"}), years="ок. 50 – ок. 135")
+
+
+@pytest.mark.parametrize("body, needle", [
+    ("name_en: X\ngroups: [ethics]\n", "name"),
+    ("name: X\nname_en: X\n", "groups"),
+    ("name: X\nname_en: X\ngroups: []\n", "groups"),
+    ("name: X\nname_en: X\ngroups: [Ethics]\n", "groups"),
+    ("name: X\nname_en: X\ngroups: [-ethics]\n", "groups"),
+])
+def test_manifest_rejects(tmp_path, body, needle):
+    m = tmp_path / "philosopher.yaml"
+    m.write_text(body, encoding="utf-8")
+    with pytest.raises(RegistryError, match=needle):
+        load_manifest(m)
+
+
+def test_manifest_missing(tmp_path):
+    with pytest.raises(RegistryError, match="манифест"):
+        load_manifest(tmp_path / "philosopher.yaml")
