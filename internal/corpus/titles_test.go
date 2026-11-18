@@ -160,6 +160,28 @@ func TestTitleRu(t *testing.T) {
 	}
 }
 
+// Решение автора: спорные названия — вариант опубликованных переводчиков (пометки
+// о сомнении сняты), составное — целиком, как в корпусе. Тест держит их как
+// решённые: правка таблицы здесь должна быть осознанной.
+func TestTitleRuAuthorDecisions(t *testing.T) {
+	for slug, want := range map[string]string{
+		"gait-of-animals":                 "О передвижении животных",
+		"longevity-and-shortness-of-life": "О долготе и краткости жизни",
+		"on-dreams":                       "О сновидениях",
+		"on-memory":                       "О памяти и припоминании",
+		"on-prophesying-by-dreams":        "О предсказаниях во сне",
+		"on-sense-and-the-sensible":       "О чувственном восприятии",
+		"on-youth-and-old-age":            "О юности и старости, о жизни и смерти и о дыхании",
+	} {
+		if got, ok := TitleRu(slug); !ok || got != want {
+			t.Errorf("TitleRu(%q) = %q, %v; решено %q", slug, got, ok, want)
+		}
+	}
+	if got, ok := CiteRu("On Memory and Reminiscence 2"); !ok || got != "О памяти и припоминании 2" {
+		t.Errorf("CiteRu для памяти: %q, %v", got, ok)
+	}
+}
+
 func TestWorkRu(t *testing.T) {
 	for _, c := range []struct {
 		en   string

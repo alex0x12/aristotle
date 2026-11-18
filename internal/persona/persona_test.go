@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/alex0x12/aristotle/internal/corpus"
 )
 
 func write(t *testing.T, dir, name, body string) {
@@ -112,5 +114,25 @@ func TestRealPersonaAssembles(t *testing.T) {
 		if !strings.Contains(out, marker) {
 			t.Errorf("маркер %q не дожил до собранного промпта", marker)
 		}
+	}
+}
+
+// Агент называет «Метеорологику» так же, как подписывает её интерфейс: русское
+// название берётся из таблицы корпуса. Остальные названия персоны сюда не
+// сведены нарочно — они сверены с таблицей вручную, а не тестом.
+func TestRealPersonaNamesMeteorologyLikeTheTable(t *testing.T) {
+	out, err := Load(filepath.Join("..", "..", "persona"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ru, ok := corpus.TitleRu("meteorology")
+	if !ok {
+		t.Fatal("meteorology нет в таблице названий корпуса")
+	}
+	if !strings.Contains(out, "«"+ru+"»") {
+		t.Errorf("в персоне нет «%s» — так называет работу интерфейс", ru)
+	}
+	if strings.Contains(out, "Метеорология") {
+		t.Error("в персоне осталось «Метеорология»: в «Мысли» т.3 это «Метеорологика»")
 	}
 }
