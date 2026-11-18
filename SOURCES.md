@@ -98,3 +98,70 @@ and Shortness of Life, On Youth and Old Age/On Life and Death/On Breathing —
 | [The Athenian Constitution](https://classics.mit.edu/Aristotle/athenian_const.mb.txt) | Sir Frederic G. Kenyon | 1921 | genuine | 69 | mit |
 | [The History of Animals](https://classics.mit.edu/Aristotle/history_anim.mb.txt) | D'Arcy Wentworth Thompson | 1910 | genuine | 230 | mit |
 | [Topics](https://classics.mit.edu/Aristotle/topics.mb.txt) | W. A. Pickard-Cambridge | 1928 | genuine | 82 | mit |
+
+## Веб-интерфейс
+
+Раздел о том, что лежит в `internal/web/static/` и `internal/corpus/titles.go`:
+изображения, шрифт и русские названия сочинений. К тексту корпуса это не
+относится; лицензия `LICENSE` (MIT) их тоже не покрывает.
+
+### Изображения
+
+Изображения взяты с Wikimedia Commons; все пять там помечены как общественное
+достояние (проверено 18.11.2026). В интерфейсе они переводятся в чёрно-белое
+средствами CSS; сами файлы — миниатюры Commons без правки: четыре шириной
+1280 пикселей, бюст (PNG с прозрачностью) — 500. Скачиваются заново командой
+`make assets` (скрипт `build/web-assets.sh`).
+
+Имена авторов и фотографов даны так, как их указывает Commons. Атрибуции
+Commons не требует ни для одного из пяти файлов; имена приведены для справки.
+
+| файл | изображение | автор; снимок | страница Commons |
+|---|---|---|---|
+| `school-of-athens.jpg` | «Афинская школа», фреска, 1511 | Рафаэль; снимок склеен из изображений с vatican.va | [File:"The School of Athens" by Raffaello Sanzio da Urbino.jpg](https://commons.wikimedia.org/wiki/File:%22The_School_of_Athens%22_by_Raffaello_Sanzio_da_Urbino.jpg) |
+| `ergastines-frieze.jpg` | Плита Эргастин, фриз Парфенона, Лувр, MR 825 | неизвестный мастер под руководством Фидия; снимок Jastrow, 2006 | [File:Egastinai frieze Louvre MR825.jpg](https://commons.wikimedia.org/wiki/File:Egastinai_frieze_Louvre_MR825.jpg) |
+| `aristotle-bust.png` | бюст Аристотеля, Палаццо Альтемпс, инв. 8575 | по Лисиппу; снимок Jastrow, 2006 | [File:Aristotle Altemps Inv8575 (png).png](https://commons.wikimedia.org/wiki/File:Aristotle_Altemps_Inv8575_(png).png) |
+| `exekias-amphora.jpg` | Ахилл и Аякс играют в кости, деталь аттической чернофигурной амфоры, 540–530 до н. э., Ватиканские музеи, инв. 16757 | Эксекий (вазописец и гончар, по подписи на сосуде); снимок Daderot, 2019 | [File:Achilles and Ajax playing dice, detail, … DSC01051 (cropped).jpg](https://commons.wikimedia.org/wiki/File:Achilles_and_Ajax_playing_dice,_detail,_Attic_black-figured_amphora,_signed_by_Exekias_as_both_painter_and_potter,_540-530_BC,_inv._16757_-_Museo_Gregoriano_Etrusco_-_Vatican_Museums_-_DSC01051_(cropped).jpg) |
+| `academy-mosaic.jpg` | мозаика «Академия Платона», Национальный археологический музей Неаполя, инв. 124545 | автор неизвестен; снимок Jebulon, 2015 | [File:MANNapoli 124545 plato's academy mosaic (cropped).jpg](https://commons.wikimedia.org/wiki/File:MANNapoli_124545_plato%27s_academy_mosaic_(cropped).jpg) |
+
+### Шрифт
+
+Единственный шрифт интерфейса — **Alegreya** (Хуан Пабло дель Перал,
+Huerta Tipográfica) под SIL Open Font License 1.1. Взят из репозитория
+[google/fonts](https://github.com/google/fonts), каталог `ofl/alegreya`:
+два переменных файла, прямой и курсив, с осью веса. Урезан `pyftsubset` до
+латиницы, кириллицы, греческого и расширенного греческого (политоника: ἔθος)
+и сжат в woff2: `internal/web/static/fonts/alegreya.woff2` и
+`alegreya-italic.woff2`. Текст лицензии лежит рядом,
+`internal/web/static/fonts/OFL-Alegreya.txt`; он открывается строкой
+«Copyright 2011 The Alegreya Project Authors
+(https://github.com/huertatipografica/Alegreya)». Других шрифтов в
+репозитории нет. Файлы пересобирает `make assets`.
+
+### Русские названия сочинений
+
+Интерфейс показывает название работы по-русски: под врезкой, в библиотеке и
+в выгрузке беседы в Markdown. Таблица лежит в `internal/corpus/titles.go`,
+по строке на каждую из 29 работ. Только для показа: журналы, разметка
+модели и сверка цитат остаются английскими.
+
+Названия выбраны автором из опубликованных русских переводов: по изданию
+«Аристотель. Сочинения в четырёх томах» (М.: Мысль, 1976–1984), где работа в
+него входит, иначе по названию русского перевода. Проверялись они только по
+страницам в сети, через пересказ страниц; ни одна печатная книга не
+открывалась. Оглавления томов 1 и 3 «Мысли» читались как веб-страницы; по
+тому 2 были перечень переводов на aristoteles.philosophy.nsc.ru и объявление
+о продаже, по тому 4 — неполная страница LiveLib. Остальное — русские
+перечни переводов: ru.wikipedia («Аристотель»), Викитека, wikilivres.ru и
+«Список русских переводов сочинений Аристотеля» А. Орлова в Respublica
+Literaria.
+
+Где перечни расходятся, взят вариант опубликованных переводчиков; это
+решение автора. Таких работ пять: «О передвижении животных», «О
+сновидениях», «О памяти и припоминании», «О предсказаниях во сне» и «О
+чувственном восприятии»; у каждой в комментарии к таблице сказано, какие
+варианты встречаются и на чём держится выбор. Составное «О юности и
+старости, о жизни и смерти и о дыхании» оставлено одним названием, как в
+корпусе, а формулировка взята по ru.wikipedia: общего русского названия у
+такого заголовка нет. Источники по строкам и оговорки — в комментариях к
+`titles.go`. С печатным изданием таблица не сверялась.
