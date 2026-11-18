@@ -651,3 +651,47 @@ func TestResumeMessagesRollsBackWhitespaceOnlyAnswer(t *testing.T) {
 		}
 	}
 }
+
+// deepseek-flash делит с deepseek переменную ключа, но не ключ из keys.json:
+// файл ключей — по имени профиля.
+func TestDeepseekFlashSharesEnvButNotFileKey(t *testing.T) {
+	cfg := config.Builtin()
+	store := keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}
+	if err := store.Set("deepseek", "ключ-только-для-deepseek"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	for name, want := range map[string]string{"deepseek": "file", "deepseek-flash": "none"} {
+		p, err := Resolve(cfg, store, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := KeySource(p); got != want {
+			t.Errorf("без окружения: %s — источник %q, ожидался %q", name, got, want)
+		}
+	}
+
+	t.Setenv("DEEPSEEK_API_KEY", "ключ-из-окружения")
+	for _, name := range []string{"deepseek", "deepseek-flash"} {
+		p, err := Resolve(cfg, store, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if k, _ := p.APIKey(); KeySource(p) != "env" || k != "ключ-из-окружения" {
+			t.Errorf("с окружением: %s — источник %q", name, KeySource(p))
+		}
+	}
+}
+
+// Список профилей для /model берётся из конфига целиком, без особых случаев.
+func TestProfileNamesIncludeDeepseekFlash(t *testing.T) {
+	names := ProfileNames(config.Builtin())
+	found := false
+	for _, n := range names {
+		found = found || n == "deepseek-flash"
+	}
+	if !found {
+		t.Fatalf("в списке нет deepseek-flash: %v", names)
+	}
+}

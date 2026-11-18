@@ -147,6 +147,15 @@ func Builtin() Config {
 				KeyEnv:        "DEEPSEEK_API_KEY",
 				ContextBudget: DefaultContextBudget,
 			},
+			// Быстрая модель того же DeepSeek: адрес и переменная ключа общие с
+			// deepseek, а ключ в keys.json у профиля свой (ключи — по имени профиля).
+			"deepseek-flash": {
+				Kind:          KindOpenAI,
+				BaseURL:       "https://api.deepseek.com/v1",
+				Model:         "deepseek-v4-flash",
+				KeyEnv:        "DEEPSEEK_API_KEY",
+				ContextBudget: DefaultContextBudget,
+			},
 			"openai": {
 				Kind:          KindOpenAI,
 				BaseURL:       "https://api.openai.com/v1",

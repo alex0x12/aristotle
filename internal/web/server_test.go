@@ -142,10 +142,12 @@ func TestStateNeverShowsKeys(t *testing.T) {
 		got[p.Name] = p.Key
 	}
 	want := map[string]keyView{
-		"deepseek":   {Source: "env", Hint: "…7731"},
-		"claude":     {Source: "file", Hint: "…4096"},
-		"openai":     {Source: "none"},
-		"openrouter": {Source: "none"},
+		"deepseek": {Source: "env", Hint: "…7731"},
+		// переменная ключа общая с deepseek, поэтому и источник, и подсказка те же
+		"deepseek-flash": {Source: "env", Hint: "…7731"},
+		"claude":         {Source: "file", Hint: "…4096"},
+		"openai":         {Source: "none"},
+		"openrouter":     {Source: "none"},
 	}
 	for name, w := range want {
 		// Подсказку в сообщение не кладём: при утечке там оказался бы ключ.

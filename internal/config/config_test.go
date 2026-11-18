@@ -1,21 +1,72 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
 
-func TestBuiltinHasFourProfiles(t *testing.T) {
+func TestBuiltinHasFiveProfiles(t *testing.T) {
 	c := Builtin()
-	for _, name := range []string{"claude", "deepseek", "openai", "openrouter"} {
+	for _, name := range []string{"claude", "deepseek", "deepseek-flash", "openai", "openrouter"} {
 		if _, ok := c.Profiles[name]; !ok {
 			t.Fatalf("нет встроенного профиля %q", name)
 		}
 	}
+	if len(c.Profiles) != 5 {
+		t.Fatalf("встроенных профилей %d, ожидалось 5", len(c.Profiles))
+	}
 	if c.Default != "deepseek" {
 		t.Fatalf("Default = %q, ожидался deepseek", c.Default)
+	}
+}
+
+// deepseek-flash — быстрая модель того же DeepSeek: тот же адрес и та же
+// переменная ключа, что у deepseek (переменная общая, ключ в keys.json — свой
+// у каждого профиля), без рассуждения, цен и температуры.
+func TestDeepseekFlashProfile(t *testing.T) {
+	p, ok := Builtin().Profiles["deepseek-flash"]
+	if !ok {
+		t.Fatal("нет встроенного профиля deepseek-flash")
+	}
+	want := Profile{
+		Kind: KindOpenAI, BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-v4-flash",
+		KeyEnv: "DEEPSEEK_API_KEY", ContextBudget: DefaultContextBudget,
+	}
+	if !reflect.DeepEqual(p, want) {
+		t.Fatalf("профиль %+v, ожидался %+v", p, want)
+	}
+	ds := Builtin().Profiles["deepseek"]
+	if p.BaseURL != ds.BaseURL || p.KeyEnv != ds.KeyEnv {
+		t.Fatal("адрес и переменная ключа должны совпадать с deepseek")
+	}
+}
+
+// Изменённый встроенный профиль пишется одной разницей, нетронутый — никак.
+func TestSaveDeepseekFlashWritesOnlyTheDifference(t *testing.T) {
+	c := Builtin()
+	f := c.Profiles["deepseek-flash"]
+	f.ContextBudget = 32000
+	c.Profiles["deepseek-flash"] = f
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	var raw struct {
+		Profiles map[string]map[string]any `json:"profiles"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("%v: %s", err, data)
+	}
+	if len(raw.Profiles) != 1 || len(raw.Profiles["deepseek-flash"]) != 1 || raw.Profiles["deepseek-flash"]["context_budget"] != float64(32000) {
+		t.Fatalf("записано не одна разница: %s", data)
+	}
+	got, err := Load(path)
+	if err != nil || !reflect.DeepEqual(got, c) {
+		t.Fatalf("круг не замкнулся: %+v, %v", got, err)
 	}
 }
 
