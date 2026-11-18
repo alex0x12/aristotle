@@ -185,5 +185,6 @@ func main() {
 			printer.Handle(ev, chapters)
 		}
 		appendHistory(chat.Record{Role: "assistant", Text: res.Text})
+		fmt.Fprintln(os.Stderr, app.UsageLine(res.Usage))
 	}
 }

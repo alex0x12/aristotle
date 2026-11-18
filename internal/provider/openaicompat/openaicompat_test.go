@@ -1,6 +1,9 @@
 package openaicompat
 
 import (
+	"bufio"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/alex0x12/aristotle/internal/provider"
@@ -106,5 +109,73 @@ func TestRequestMaxTokensOverridesProfile(t *testing.T) {
 	})
 	if got := body["max_tokens"]; got != 500 {
 		t.Fatalf("max_tokens = %v, ожидалось 500 (явный per-запросный побеждает потолок профиля)", got)
+	}
+}
+
+// drain прогоняет записанный поток через разбор и возвращает текст и расход.
+func drain(t *testing.T, sse string) (string, provider.Usage) {
+	t.Helper()
+	s := &stream{body: io.NopCloser(strings.NewReader("")), sc: bufio.NewScanner(strings.NewReader(sse))}
+	var text strings.Builder
+	var usage provider.Usage
+	for s.Next() {
+		ev := s.Event()
+		switch ev.Kind {
+		case provider.EventText:
+			text.WriteString(ev.Text)
+		case provider.EventUsage:
+			usage = ev.Usage
+		}
+	}
+	if err := s.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return text.String(), usage
+}
+
+// DeepSeek: расход в последнем куске вместе с finish_reason, кэш своим полем.
+const deepseekStream = `data: {"choices":[{"index":0,"delta":{"content":"Да."},"finish_reason":null}]}` + "\n\n" +
+	`data: {"choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":20000,"completion_tokens":350,"prompt_cache_hit_tokens":18000,"prompt_cache_miss_tokens":2000}}` + "\n\n" +
+	"data: [DONE]\n\n"
+
+// OpenAI и OpenRouter: отдельный кусок с пустым choices, кэш в prompt_tokens_details.
+const openaiStream = `data: {"choices":[{"index":0,"delta":{"content":"Да."},"finish_reason":null}]}` + "\n\n" +
+	`data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n" +
+	`data: {"choices":[],"usage":{"prompt_tokens":20000,"completion_tokens":350,"prompt_tokens_details":{"cached_tokens":18000}}}` + "\n\n" +
+	"data: [DONE]\n\n"
+
+const silentStream = `data: {"choices":[{"index":0,"delta":{"content":"Да."},"finish_reason":"stop"}]}` + "\n\n" +
+	"data: [DONE]\n\n"
+
+func TestUsageDeepSeek(t *testing.T) {
+	text, u := drain(t, deepseekStream)
+	want := provider.Usage{Input: 2000, Output: 350, CacheRead: 18000, Known: true}
+	if text != "Да." || u != want {
+		t.Fatalf("текст %q, расход %+v, ожидалось %+v", text, u, want)
+	}
+}
+
+func TestUsageOpenAIEmptyChoices(t *testing.T) {
+	_, u := drain(t, openaiStream)
+	want := provider.Usage{Input: 2000, Output: 350, CacheRead: 18000, Known: true}
+	if u != want {
+		t.Fatalf("расход %+v, ожидалось %+v", u, want)
+	}
+}
+
+func TestUsageMissingIsUnknown(t *testing.T) {
+	_, u := drain(t, silentStream)
+	if u.Known {
+		t.Fatalf("расход без usage в потоке не может быть известным: %+v", u)
+	}
+}
+
+func TestBodyAsksForUsage(t *testing.T) {
+	body := buildBody("deepseek-v4-pro", false, 0, provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
+	})
+	opts, ok := body["stream_options"].(map[string]any)
+	if !ok || opts["include_usage"] != true {
+		t.Fatalf("stream_options = %#v", body["stream_options"])
 	}
 }

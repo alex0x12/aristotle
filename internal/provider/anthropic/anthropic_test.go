@@ -1,7 +1,14 @@
 package anthropic
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	sdk "github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/alex0x12/aristotle/internal/provider"
 )
@@ -93,5 +100,62 @@ func TestParamsRejectsUnparsableRequired(t *testing.T) {
 	}
 	if _, err := c.params(req); err == nil {
 		t.Fatal("params должен вернуть ошибку при непригодном required")
+	}
+}
+
+// anthropicStream — запись настоящего потока Messages API, сокращённая.
+// message_start несёт вход и кэш, message_delta — итоговый вывод.
+const anthropicStream = "event: message_start\n" +
+	`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":120,"cache_creation_input_tokens":300,"cache_read_input_tokens":18000,"output_tokens":1}}}` + "\n\n" +
+	"event: content_block_start\n" +
+	`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+	"event: content_block_delta\n" +
+	`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Добродетель"}}` + "\n\n" +
+	"event: content_block_stop\n" +
+	`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+	"event: message_delta\n" +
+	`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":42}}` + "\n\n" +
+	"event: message_stop\n" +
+	`data: {"type":"message_stop"}` + "\n\n"
+
+func TestStreamReportsUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, anthropicStream)
+	}))
+	defer srv.Close()
+
+	c := &client{
+		api:   sdk.NewClient(option.WithAPIKey("тест"), option.WithBaseURL(srv.URL)),
+		model: "claude-opus-5",
+	}
+	st, err := c.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	var text string
+	var got provider.Usage
+	for st.Next() {
+		ev := st.Event()
+		switch ev.Kind {
+		case provider.EventText:
+			text += ev.Text
+		case provider.EventUsage:
+			got = ev.Usage
+		}
+	}
+	if err := st.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := provider.Usage{Input: 120, Output: 42, CacheRead: 18000, CacheWrite: 300, Known: true}
+	if got != want {
+		t.Fatalf("расход = %+v, ожидалось %+v", got, want)
+	}
+	if text != "Добродетель" {
+		t.Fatalf("текст = %q", text)
 	}
 }

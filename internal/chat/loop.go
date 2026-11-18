@@ -47,6 +47,9 @@ type TurnResult struct {
 	Chapters   []corpus.Chapter
 	Iterations int
 	Exhausted  bool
+	// Usage — расход всех запросов хода (обращения к поиску — отдельные
+	// запросы). Known — только если каждый запрос сообщил свой расход.
+	Usage provider.Usage
 }
 
 func argString(input map[string]any, key string) string {
@@ -126,6 +129,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 
 	var res TurnResult
 	var answer strings.Builder
+	requests := 0
 
 	for {
 		req := provider.Request{
@@ -146,6 +150,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 
 		var text strings.Builder
 		var calls []provider.ToolCall
+		var reqUsage provider.Usage
 		for stream.Next() {
 			ev := stream.Event()
 			switch ev.Kind {
@@ -157,6 +162,8 @@ func (s *Session) Turn(ctx context.Context, userText string,
 				}
 			case provider.EventToolCall:
 				calls = append(calls, ev.Call)
+			case provider.EventUsage:
+				reqUsage = ev.Usage
 			}
 		}
 		if err := stream.Err(); err != nil {
@@ -165,6 +172,13 @@ func (s *Session) Turn(ctx context.Context, userText string,
 			return res, err
 		}
 		stream.Close()
+
+		if requests == 0 {
+			res.Usage = reqUsage
+		} else {
+			res.Usage = res.Usage.Add(reqUsage)
+		}
+		requests++
 
 		s.Messages = append(s.Messages, provider.Message{
 			Role:      provider.RoleAssistant,

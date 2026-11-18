@@ -69,6 +69,8 @@ const (
 	EventText EventKind = iota
 	EventToolCall
 	EventDone
+	// EventUsage — расход токенов запроса; приходит один раз, перед EventDone.
+	EventUsage
 )
 
 type Event struct {
@@ -76,6 +78,37 @@ type Event struct {
 	Text       string
 	Call       ToolCall
 	StopReason string
+	Usage      Usage
+}
+
+// Usage — расход токенов запроса или суммы запросов. Input — входные токены
+// без кэша; CacheRead и CacheWrite — прочитанные из кэша и записанные в него.
+// Known = false: провайдер расход не сообщил, и сумма неизвестна.
+type Usage struct {
+	Input      int  `json:"input"`
+	Output     int  `json:"output"`
+	CacheRead  int  `json:"cache_read"`
+	CacheWrite int  `json:"cache_write"`
+	Known      bool `json:"known"`
+}
+
+// Prompt — весь вход запроса, вместе с кэшем: по нему калибруется оценка
+// размера контекста.
+func (u Usage) Prompt() int { return u.Input + u.CacheRead + u.CacheWrite }
+
+// Total — все токены запроса.
+func (u Usage) Total() int { return u.Prompt() + u.Output }
+
+// Add складывает расход. Сумма известна, только если известны оба слагаемых:
+// иначе показанная цифра была бы заниженной без всякой пометки.
+func (u Usage) Add(o Usage) Usage {
+	return Usage{
+		Input:      u.Input + o.Input,
+		Output:     u.Output + o.Output,
+		CacheRead:  u.CacheRead + o.CacheRead,
+		CacheWrite: u.CacheWrite + o.CacheWrite,
+		Known:      u.Known && o.Known,
+	}
 }
 
 type Stream interface {

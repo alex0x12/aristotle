@@ -95,6 +95,8 @@ func buildBody(model string, reasoning bool, maxTokens int, req provider.Request
 		"model":    model,
 		"messages": msgs,
 		"stream":   true,
+		// Без этого поля OpenAI и OpenRouter не присылают расход вовсе.
+		"stream_options": map[string]any{"include_usage": true},
 	}
 	if reasoning {
 		body["max_completion_tokens"] = req.EffectiveMaxTokensFor(maxTokens)
@@ -167,6 +169,34 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (provider.Str
 	return &stream{body: resp.Body, sc: bufio.NewScanner(resp.Body)}, nil
 }
 
+// chunkUsage — расход в потоке. Кэш у провайдеров назван по-разному:
+// OpenAI и OpenRouter — prompt_tokens_details.cached_tokens, DeepSeek —
+// prompt_cache_hit_tokens.
+type chunkUsage struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	PromptCacheHitTokens *int `json:"prompt_cache_hit_tokens"`
+}
+
+func usageOf(u chunkUsage) provider.Usage {
+	cached := 0
+	switch {
+	case u.PromptCacheHitTokens != nil:
+		cached = *u.PromptCacheHitTokens
+	case u.PromptTokensDetails != nil:
+		cached = u.PromptTokensDetails.CachedTokens
+	}
+	return provider.Usage{
+		Input:     u.PromptTokens - cached,
+		Output:    u.CompletionTokens,
+		CacheRead: cached,
+		Known:     true,
+	}
+}
+
 type chunk struct {
 	Choices []struct {
 		Delta struct {
@@ -182,6 +212,7 @@ type chunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *chunkUsage `json:"usage"`
 }
 
 type stream struct {
@@ -191,6 +222,7 @@ type stream struct {
 	pending []provider.Event
 	cur     provider.Event
 	stop    string
+	usage   provider.Usage
 	done    bool
 	err     error
 }
@@ -210,7 +242,15 @@ func (s *stream) Next() bool {
 			break
 		}
 		var ch chunk
-		if err := json.Unmarshal([]byte(data), &ch); err != nil || len(ch.Choices) == 0 {
+		if err := json.Unmarshal([]byte(data), &ch); err != nil {
+			continue
+		}
+		// Расход приходит последним куском, у OpenAI — с пустым choices.
+		// Разбирать его надо до проверки choices, иначе он пропадёт.
+		if ch.Usage != nil {
+			s.usage = usageOf(*ch.Usage)
+		}
+		if len(ch.Choices) == 0 {
 			continue
 		}
 		choice := ch.Choices[0]
@@ -241,6 +281,7 @@ func (s *stream) Next() bool {
 	if stop == "tool_calls" {
 		stop = "tool_use" // приводим к словарю нейтрального слоя
 	}
+	s.pending = append(s.pending, provider.Event{Kind: provider.EventUsage, Usage: s.usage})
 	s.pending = append(s.pending,
 		provider.Event{Kind: provider.EventDone, StopReason: stop})
 	s.cur, s.pending = s.pending[0], s.pending[1:]

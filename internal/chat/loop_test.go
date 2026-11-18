@@ -546,3 +546,49 @@ func TestOnSearchStartFiresBeforeEachSearch(t *testing.T) {
 		t.Errorf("starts = %+v", starts)
 	}
 }
+
+func TestTurnSumsUsageAcrossRequests(t *testing.T) {
+	p := &scriptedProvider{turns: [][]provider.Event{
+		{
+			{Kind: provider.EventToolCall, Call: provider.ToolCall{ID: "t1", Name: "search_corpus", Input: map[string]any{"query": "virtue"}}},
+			{Kind: provider.EventUsage, Usage: provider.Usage{Input: 100, Output: 10, CacheRead: 1000, Known: true}},
+			{Kind: provider.EventDone, StopReason: "tool_use"},
+		},
+		{
+			{Kind: provider.EventText, Text: "ответ"},
+			{Kind: provider.EventUsage, Usage: provider.Usage{Input: 50, Output: 200, CacheRead: 1100, CacheWrite: 7, Known: true}},
+			{Kind: provider.EventDone, StopReason: "end_turn"},
+		},
+	}}
+	s := &Session{Provider: p, Corpus: &fakeFinder{}}
+	res, err := s.Turn(context.Background(), "что такое добродетель?", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := provider.Usage{Input: 150, Output: 210, CacheRead: 2100, CacheWrite: 7, Known: true}
+	if res.Usage != want {
+		t.Fatalf("расход хода = %+v, ожидалось %+v", res.Usage, want)
+	}
+}
+
+func TestTurnUsageUnknownWhenARequestIsSilent(t *testing.T) {
+	p := &scriptedProvider{turns: [][]provider.Event{
+		{
+			{Kind: provider.EventToolCall, Call: provider.ToolCall{ID: "t1", Name: "search_corpus", Input: map[string]any{"query": "virtue"}}},
+			{Kind: provider.EventUsage, Usage: provider.Usage{Input: 100, Output: 10, Known: true}},
+			{Kind: provider.EventDone, StopReason: "tool_use"},
+		},
+		{
+			{Kind: provider.EventText, Text: "ответ"},
+			{Kind: provider.EventDone, StopReason: "end_turn"},
+		},
+	}}
+	s := &Session{Provider: p, Corpus: &fakeFinder{}}
+	res, err := s.Turn(context.Background(), "вопрос", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Usage.Known {
+		t.Fatalf("один запрос без расхода делает сумму неизвестной: %+v", res.Usage)
+	}
+}

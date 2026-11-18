@@ -192,6 +192,16 @@ func (s *stream) finish() []provider.Event {
 			Call: provider.ToolCall{ID: use.ID, Name: use.Name, Input: input},
 		})
 	}
+	u := s.msg.Usage
+	out = append(out, provider.Event{Kind: provider.EventUsage, Usage: provider.Usage{
+		Input:      int(u.InputTokens),
+		Output:     int(u.OutputTokens),
+		CacheRead:  int(u.CacheReadInputTokens),
+		CacheWrite: int(u.CacheCreationInputTokens),
+		// message_start приходит первым и несёт id сообщения; без него
+		// расход провайдер не сообщил.
+		Known: s.msg.ID != "",
+	}})
 	return append(out, provider.Event{
 		Kind:       provider.EventDone,
 		StopReason: string(s.msg.StopReason),
