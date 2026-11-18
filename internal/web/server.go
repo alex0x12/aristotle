@@ -50,11 +50,6 @@ type Server struct {
 	works   []workRef
 }
 
-// Заглушка до задачи 9: поле Server ссылается на этот тип, а настоящее
-// определение (library.go) появится позже. При добавлении настоящего типа
-// заглушку рядом удалить.
-type workRef struct{}
-
 func New(root string, paths app.Paths, port int) *Server {
 	return &Server{Root: root, Paths: paths, Port: port, convs: map[string]*conv{}}
 }
@@ -102,6 +97,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/conversations/{id}", s.handleDelete)
 	mux.HandleFunc("POST /api/conversations/{id}/turns", s.handleTurn)
 	mux.HandleFunc("POST /api/conversations/{id}/again", s.handleAgain)
+	mux.HandleFunc("GET /api/corpus/works", s.handleWorks)
+	mux.HandleFunc("GET /api/corpus/chapter", s.handleChapter)
+	mux.HandleFunc("GET /api/corpus/search", s.handleSearch)
 }
 
 // guard пропускает только запросы к себе и только со своей страницы.

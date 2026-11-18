@@ -153,19 +153,34 @@ blockquote.quote cite { display: block; font-style: normal; font-family: var(--c
   -webkit-mask-image: linear-gradient(#000 55%, transparent); mask-image: linear-gradient(#000 55%, transparent); }
 .library .search { display: flex; gap: 8px; padding: 0 16px 10px; }
 .library .search input { flex: 1; background: rgba(0,0,0,.5); border: 1px solid var(--line); padding: 5px 10px; }
+.library .search input::placeholder { color: var(--dim); opacity: 1; }
+.library .search input:focus { outline: none; border-color: var(--bone); }
 .library .cols { flex: 1; display: flex; min-height: 0; }
 .library .works { width: 290px; flex-shrink: 0; overflow-y: auto; padding: 4px 16px 12px; border-right: 1px solid var(--line); font-size: 14px; }
 .library .works h4 { font-family: var(--caps); letter-spacing: .25em; font-size: 11px; color: var(--ash); font-weight: 400; margin: 12px 0 4px; }
-.library .work > button { background: none; border: none; text-align: left; cursor: pointer; padding: 2px 0; width: 100%; }
-.library .chapters { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 6px 10px; }
+.library .work > button { display: flex; align-items: baseline; gap: 8px; background: none; border: none; text-align: left;
+  cursor: pointer; padding: 2px 0; width: 100%; }
+.library .work > button:hover { color: #fff; }
+/* стрелка раскрытия — граница квадрата, без символов шрифта */
+.library .work > button::before { content: ''; flex: none; width: 5px; height: 5px; border-right: 1px solid var(--ash);
+  border-bottom: 1px solid var(--ash); transform: translateY(-2px) rotate(-45deg); transition: transform .12s; }
+.library .work > button[aria-expanded="true"]::before { transform: translateY(-3px) rotate(45deg); }
+.library .chapters { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 8px 13px; }
 .library .chapters a { font-size: 12px; text-decoration: none; border: 1px solid var(--line); padding: 0 5px; }
 .library .chapters a.on, .library .chapters a:hover { border-color: var(--bone); }
-.library .book { font-family: var(--caps); font-size: 11px; color: var(--ash); width: 100%; }
+.library .chapters a.on { background: rgba(233,230,223,.16); }
+.library .book { font-family: var(--caps); letter-spacing: .15em; font-size: 11px; color: var(--ash); width: 100%; margin-top: 3px; }
 .reader { flex: 1; overflow-y: auto; padding: 18px 30px; }
 .reader h2 { font-family: var(--caps); letter-spacing: .2em; font-weight: 400; font-size: 18px; margin-bottom: 4px; text-transform: uppercase; }
 .reader .sub { color: var(--ash); font-size: 13px; margin-bottom: 14px; }
+/* длинная строка английского текста утомляет: колонка в рамках 46 em */
+.reader p, .reader .sub { max-width: 46em; }
 .reader p { margin-bottom: 10px; }
-.reader .hit { border-bottom: 1px solid var(--line); padding: 8px 0; cursor: pointer; }
+.reader .hit { display: block; text-decoration: none; border-bottom: 1px solid var(--line); padding: 9px 6px; }
+.reader .hit:hover { background: rgba(233,230,223,.05); }
+.reader .hit b { font-family: var(--caps); letter-spacing: .12em; font-weight: 400; font-size: 13px; text-transform: uppercase; }
+.reader .hit .snip { display: block; color: var(--soft); font-size: 14px; margin-top: 2px; }
+.reader .banner { max-width: 46em; }
 .badge { font-family: var(--caps); font-size: 10px; letter-spacing: .12em; border: 1px solid var(--dim); color: var(--ash); padding: 0 4px; margin-left: 6px; }
 
 .settings { flex: 1; overflow-y: auto; padding: 18px 30px; }
