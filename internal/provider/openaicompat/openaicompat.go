@@ -119,13 +119,27 @@ func buildBody(model string, reasoning bool, maxTokens int, req provider.Request
 	return body
 }
 
+// tune дописывает настройки профиля, которых нет в запросе: усилие
+// рассуждения — только рассуждающим моделям, температуру — только обычным
+// (рассуждающие её не принимают).
+func tune(body map[string]any, reasoning bool, effort string, temperature *float64) {
+	if reasoning && effort != "" {
+		body["reasoning_effort"] = effort
+	}
+	if !reasoning && temperature != nil {
+		body["temperature"] = *temperature
+	}
+}
+
 type client struct {
-	baseURL   string
-	key       string
-	model     string
-	reasoning bool
-	maxTokens int
-	http      *http.Client
+	baseURL     string
+	key         string
+	model       string
+	reasoning   bool
+	maxTokens   int
+	effort      string
+	temperature *float64
+	http        *http.Client
 }
 
 func New(p config.Profile) (provider.Provider, error) {
@@ -134,17 +148,21 @@ func New(p config.Profile) (provider.Provider, error) {
 		return nil, err
 	}
 	return &client{
-		baseURL:   strings.TrimSuffix(p.BaseURL, "/"),
-		key:       key,
-		model:     p.Model,
-		reasoning: p.Reasoning,
-		maxTokens: p.MaxOutputTokens,
-		http:      &http.Client{},
+		baseURL:     strings.TrimSuffix(p.BaseURL, "/"),
+		key:         key,
+		model:       p.Model,
+		reasoning:   p.Reasoning,
+		maxTokens:   p.MaxOutputTokens,
+		effort:      p.ReasoningEffort,
+		temperature: p.Temperature,
+		http:        &http.Client{},
 	}, nil
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (provider.Stream, error) {
-	payload, err := json.Marshal(buildBody(c.model, c.reasoning, c.maxTokens, req))
+	body := buildBody(c.model, c.reasoning, c.maxTokens, req)
+	tune(body, c.reasoning, c.effort, c.temperature)
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}

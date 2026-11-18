@@ -179,3 +179,20 @@ func TestBodyAsksForUsage(t *testing.T) {
 		t.Fatalf("stream_options = %#v", body["stream_options"])
 	}
 }
+
+func TestTuneEffortOnlyForReasoning(t *testing.T) {
+	body := map[string]any{}
+	temp := 0.5
+	tune(body, true, "high", &temp)
+	if body["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %v", body["reasoning_effort"])
+	}
+	if _, ok := body["temperature"]; ok {
+		t.Fatal("рассуждающая модель temperature не принимает")
+	}
+	plain := map[string]any{}
+	tune(plain, false, "high", &temp)
+	if _, ok := plain["reasoning_effort"]; ok || plain["temperature"] != 0.5 {
+		t.Fatalf("обычная модель: %v", plain)
+	}
+}

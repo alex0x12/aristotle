@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -234,5 +235,75 @@ func TestAPIKeyMissing(t *testing.T) {
 	os.Unsetenv(p.KeyEnv)
 	if _, err := p.APIKey(); err == nil {
 		t.Fatal("ожидалась ошибка при отсутствии переменной")
+	}
+}
+
+func TestBuiltinBudgetAndCorpusK(t *testing.T) {
+	c := Builtin()
+	if c.CorpusK != 6 {
+		t.Fatalf("CorpusK = %d", c.CorpusK)
+	}
+	for name, p := range c.Profiles {
+		if p.ContextBudget != 64000 || p.Prices != nil {
+			t.Errorf("%s: бюджет %d, цены %+v", name, p.ContextBudget, p.Prices)
+		}
+	}
+}
+
+func TestSaveBuiltinWritesNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Save(path, Builtin()); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "{}\n" {
+		t.Fatalf("config.json = %q, ожидалось {}", data)
+	}
+}
+
+func TestSaveLoadRoundTrip(t *testing.T) {
+	c := Builtin()
+	claude := c.Profiles["claude"]
+	claude.Model = "claude-opus-5-5"
+	temp := 0.4
+	claude.Temperature = &temp
+	claude.Prices = &Prices{Input: 15, Output: 75, CacheRead: 1.5, CacheWrite: 18.75}
+	c.Profiles["claude"] = claude
+	ds := c.Profiles["deepseek"]
+	ds.ContextBudget = 0
+	c.Profiles["deepseek"] = ds
+	c.Profiles["local"] = Profile{
+		Kind: KindOpenAI, BaseURL: "http://127.0.0.1:11434/v1", Model: "qwen3",
+		Reasoning: true, ReasoningEffort: "low", ContextBudget: 32000,
+	}
+	c.Default = "local"
+	c.CorpusK = 4
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, c) {
+		t.Fatalf("Load(Save(c)) != c\nполучено: %+v\nожидалось: %+v", got, c)
+	}
+	st, _ := os.Stat(path)
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("права %v", st.Mode().Perm())
+	}
+}
+
+func TestAPIKeyEnvBeatsFile(t *testing.T) {
+	p := Profile{Name: "x", KeyEnv: "ARISTOTLE_TEST_KEY_ORDER", Key: "из-файла"}
+	t.Setenv(p.KeyEnv, "из-окружения")
+	if k, _ := p.APIKey(); k != "из-окружения" {
+		t.Fatalf("ключ = %q", k)
+	}
+	t.Setenv(p.KeyEnv, "")
+	if k, _ := p.APIKey(); k != "из-файла" {
+		t.Fatalf("ключ = %q", k)
 	}
 }

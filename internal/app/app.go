@@ -13,6 +13,7 @@ import (
 	"github.com/alex0x12/aristotle/internal/chat"
 	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
+	"github.com/alex0x12/aristotle/internal/keys"
 	"github.com/alex0x12/aristotle/internal/provider"
 	anth "github.com/alex0x12/aristotle/internal/provider/anthropic"
 	"github.com/alex0x12/aristotle/internal/provider/openaicompat"
@@ -76,12 +77,39 @@ func NewProvider(p config.Profile) (provider.Provider, error) {
 	}
 }
 
+// Resolve — профиль по имени с ключом из keys.json. Переменная окружения
+// профиля всё равно важнее: это решает config.Profile.APIKey.
+func Resolve(cfg config.Config, store keys.Store, name string) (config.Profile, error) {
+	p, err := cfg.Resolve(name)
+	if err != nil {
+		return config.Profile{}, err
+	}
+	key, err := store.Get(p.Name)
+	if err != nil {
+		return config.Profile{}, err
+	}
+	p.Key = key
+	return p, nil
+}
+
+// KeySource — откуда возьмётся ключ профиля: "env", "file" или "none".
+func KeySource(p config.Profile) string {
+	switch {
+	case p.KeyEnv != "" && os.Getenv(p.KeyEnv) != "":
+		return "env"
+	case p.Key != "":
+		return "file"
+	default:
+		return "none"
+	}
+}
+
 // SwitchProfile разрешает имя профиля и создаёт для него провайдера. Не
 // трогает ничего снаружи: при ошибке (нет такого профиля, не задан ключ)
 // вызывающая сторона просто не подставляет возвращённые значения, и прежний
 // профиль остаётся рабочим.
-func SwitchProfile(cfg config.Config, name string) (config.Profile, provider.Provider, error) {
-	p, err := cfg.Resolve(name)
+func SwitchProfile(cfg config.Config, store keys.Store, name string) (config.Profile, provider.Provider, error) {
+	p, err := Resolve(cfg, store, name)
 	if err != nil {
 		return config.Profile{}, nil, err
 	}

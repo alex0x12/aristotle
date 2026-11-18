@@ -15,9 +15,10 @@ import (
 )
 
 type client struct {
-	api       sdk.Client
-	model     string
-	maxTokens int
+	api         sdk.Client
+	model       string
+	maxTokens   int
+	temperature *float64
 }
 
 func New(p config.Profile) (provider.Provider, error) {
@@ -26,9 +27,10 @@ func New(p config.Profile) (provider.Provider, error) {
 		return nil, err
 	}
 	return &client{
-		api:       sdk.NewClient(option.WithAPIKey(key)),
-		model:     p.Model,
-		maxTokens: p.MaxOutputTokens,
+		api:         sdk.NewClient(option.WithAPIKey(key)),
+		model:       p.Model,
+		maxTokens:   p.MaxOutputTokens,
+		temperature: p.Temperature,
 	}, nil
 }
 
@@ -36,6 +38,9 @@ func (c *client) params(req provider.Request) (sdk.MessageNewParams, error) {
 	p := sdk.MessageNewParams{
 		Model:     sdk.Model(c.model),
 		MaxTokens: int64(req.EffectiveMaxTokensFor(c.maxTokens)),
+	}
+	if c.temperature != nil {
+		p.Temperature = param.NewOpt(*c.temperature)
 	}
 
 	// Кэшируем префикс: персона не меняется в течение беседы.

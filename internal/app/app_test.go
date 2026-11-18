@@ -2,11 +2,13 @@ package app
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/alex0x12/aristotle/internal/chat"
 	"github.com/alex0x12/aristotle/internal/config"
+	"github.com/alex0x12/aristotle/internal/keys"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
 
@@ -164,7 +166,7 @@ func TestSwitchProfileKnownChangesProvider(t *testing.T) {
 	p.KeyEnv = "ARISTOTLE_TEST_DEEPSEEK_KEY"
 	cfg.Profiles["deepseek"] = p
 
-	profile, prov, err := SwitchProfile(cfg, "deepseek")
+	profile, prov, err := SwitchProfile(cfg, keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}, "deepseek")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +183,7 @@ func TestSwitchProfileKnownChangesProvider(t *testing.T) {
 // ничего у вызывающей стороны (она просто не подставит нулевые значения).
 func TestSwitchProfileUnknownReturnsError(t *testing.T) {
 	cfg := config.Builtin()
-	profile, prov, err := SwitchProfile(cfg, "нет-такого-профиля")
+	profile, prov, err := SwitchProfile(cfg, keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}, "нет-такого-профиля")
 	if err == nil {
 		t.Fatal("ожидалась ошибка для неизвестного профиля")
 	}
@@ -202,7 +204,7 @@ func TestSwitchProfileMissingKeyReturnsError(t *testing.T) {
 	cfg.Profiles["claude"] = p
 	os.Unsetenv(p.KeyEnv)
 
-	_, prov, err := SwitchProfile(cfg, "claude")
+	_, prov, err := SwitchProfile(cfg, keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}, "claude")
 	if err == nil {
 		t.Fatal("ожидалась ошибка при отсутствии ключа")
 	}
@@ -257,5 +259,29 @@ func TestDropLastTurnRemovesFromLastQuestion(t *testing.T) {
 	got := DropLastTurn(msgs)
 	if len(got) != 2 || got[1].Text != "ответ" {
 		t.Fatalf("DropLastTurn = %+v", got)
+	}
+}
+
+func TestResolveTakesKeyFromFile(t *testing.T) {
+	store := keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}
+	if err := store.Set("claude", "sk-ant-из-файла"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Builtin()
+	p := cfg.Profiles["claude"]
+	p.KeyEnv = "ARISTOTLE_TEST_RESOLVE_KEY"
+	cfg.Profiles["claude"] = p
+	t.Setenv(p.KeyEnv, "")
+
+	got, err := Resolve(cfg, store, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k, _ := got.APIKey(); k != "sk-ant-из-файла" || KeySource(got) != "file" {
+		t.Fatalf("ключ %q, источник %q", k, KeySource(got))
+	}
+	t.Setenv(p.KeyEnv, "sk-из-окружения")
+	if KeySource(got) != "env" {
+		t.Fatalf("источник %q", KeySource(got))
 	}
 }

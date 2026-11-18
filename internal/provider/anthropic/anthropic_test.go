@@ -159,3 +159,15 @@ func TestStreamReportsUsage(t *testing.T) {
 		t.Fatalf("текст = %q", text)
 	}
 }
+
+func TestParamsTemperature(t *testing.T) {
+	temp := 0.3
+	c := &client{model: "claude-opus-5", temperature: &temp}
+	p, err := c.params(provider.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Temperature.Valid() || p.Temperature.Value != 0.3 {
+		t.Fatalf("Temperature = %+v", p.Temperature)
+	}
+}

@@ -24,6 +24,9 @@ type Session struct {
 	System   string
 	Messages []provider.Message
 
+	// DefaultK — сколько глав просить у поиска, если модель не указала k;
+	// 0 — шесть, как было всегда.
+	DefaultK int
 	// Budget — потолок входа запроса в токенах; 0 — без урезания.
 	Budget int
 	// LastPrompt — сколько токенов ушло на вход последнего запроса: по
@@ -46,6 +49,13 @@ type Session struct {
 	// обращением к поиску. Холодный qmd поднимается 8-13 секунд, и без
 	// какого-либо признака работы это неотличимо от зависания.
 	OnSearchStart func(query, group string)
+}
+
+func (s *Session) defaultK() int {
+	if s.DefaultK > 0 {
+		return s.DefaultK
+	}
+	return 6
 }
 
 type TurnResult struct {
@@ -227,7 +237,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 				s.OnSearchStart(query, group)
 			}
 			hits, err := s.Corpus.Search(ctx, query, group,
-				argInt(call.Input, "k", 6))
+				argInt(call.Input, "k", s.defaultK()))
 			if err != nil {
 				msg := "поиск не удался: " + err.Error()
 				if s.OnSearchWarning != nil {

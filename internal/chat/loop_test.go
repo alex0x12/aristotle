@@ -650,3 +650,21 @@ func TestFailedTurnMarksUsageUnknown(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultKUsedWhenModelGivesNone(t *testing.T) {
+	p := &scriptedProvider{turns: [][]provider.Event{
+		{
+			{Kind: provider.EventToolCall, Call: provider.ToolCall{ID: "t", Name: "search_corpus", Input: map[string]any{"query": "x"}}},
+			{Kind: provider.EventDone, StopReason: "tool_use"},
+		},
+		{{Kind: provider.EventText, Text: "ответ"}, {Kind: provider.EventDone, StopReason: "end_turn"}},
+	}}
+	f := &capturingFinder{}
+	s := &Session{Provider: p, Corpus: f, DefaultK: 3}
+	if _, err := s.Turn(context.Background(), "вопрос", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if f.gotK != 3 {
+		t.Fatalf("k = %d, ожидалось 3", f.gotK)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/alex0x12/aristotle/internal/chat"
 	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
+	"github.com/alex0x12/aristotle/internal/keys"
 	"github.com/alex0x12/aristotle/internal/persona"
 	"github.com/alex0x12/aristotle/internal/render"
 )
@@ -37,7 +38,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "конфиг:", err)
 		os.Exit(1)
 	}
-	profile, err := cfg.Resolve(*modelName)
+	store := keys.Store{Path: paths.Keys}
+	profile, err := app.Resolve(cfg, store, *modelName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -61,6 +63,7 @@ func main() {
 
 	searcher := app.NewSearcher(*root)
 	session := &chat.Session{Provider: prov, Corpus: searcher, System: system,
+		Budget: profile.ContextBudget, DefaultK: cfg.CorpusK,
 		OnSearchWarning: func(msg string) {
 			fmt.Fprintln(os.Stderr, "предупреждение:", msg)
 		},
@@ -127,13 +130,14 @@ func main() {
 				fmt.Println("доступные профили:", strings.Join(app.ProfileNames(cfg), ", "))
 				continue
 			}
-			newProfile, newProv, err := app.SwitchProfile(cfg, fields[1])
+			newProfile, newProv, err := app.SwitchProfile(cfg, store, fields[1])
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "ошибка:", err)
 				continue
 			}
 			profile, prov = newProfile, newProv
 			session.Provider = prov
+			session.Budget = profile.ContextBudget
 			fmt.Printf("профиль переключён: %s (%s)\n", profile.Name, profile.Model)
 			continue
 

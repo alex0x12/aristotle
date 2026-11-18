@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
 
@@ -37,4 +38,15 @@ func UsageLine(u provider.Usage) string {
 	}
 	parts = append(parts, "вывод "+FormatTokens(u.Output))
 	return "[токены: " + strings.Join(parts, " · ") + "]"
+}
+
+// Cost — стоимость расхода по ценам профиля в долларах; nil — цен нет или
+// расход неизвестен.
+func Cost(p *config.Prices, u provider.Usage) *float64 {
+	if p == nil || !u.Known {
+		return nil
+	}
+	c := (float64(u.Input)*p.Input + float64(u.Output)*p.Output +
+		float64(u.CacheRead)*p.CacheRead + float64(u.CacheWrite)*p.CacheWrite) / 1e6
+	return &c
 }
