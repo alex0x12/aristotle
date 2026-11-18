@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"os"
@@ -21,9 +21,9 @@ func TestResumeMessagesRestoresRoles(t *testing.T) {
 		{Time: time.Now(), Role: "user", Text: "и что из этого следует?"},
 		{Time: time.Now(), Role: "assistant", Text: "стало быть, счастье — дело"},
 	}
-	got := resumeMessages(records)
+	got := ResumeMessages(records)
 	if len(got) != 4 {
-		t.Fatalf("resumeMessages вернул %d сообщений, ожидалось 4", len(got))
+		t.Fatalf("ResumeMessages вернул %d сообщений, ожидалось 4", len(got))
 	}
 	want := []struct {
 		role provider.Role
@@ -52,9 +52,9 @@ func TestResumeMessagesDropsTrailingUnansweredUser(t *testing.T) {
 		{Role: "assistant", Text: "деятельность души"},
 		{Role: "user", Text: "оборванный вопрос без ответа"},
 	}
-	got := resumeMessages(records)
+	got := ResumeMessages(records)
 	if len(got) != 2 {
-		t.Fatalf("resumeMessages вернул %d сообщений, ожидалось 2 (хвост без ответа отброшен): %+v", len(got), got)
+		t.Fatalf("ResumeMessages вернул %d сообщений, ожидалось 2 (хвост без ответа отброшен): %+v", len(got), got)
 	}
 	if got[len(got)-1].Role != provider.RoleAssistant {
 		t.Fatalf("последнее сообщение должно быть от assistant, получено %+v", got[len(got)-1])
@@ -66,9 +66,9 @@ func TestResumeMessagesDropsTrailingUnansweredUser(t *testing.T) {
 // быть пуст, а не одно висящее сообщение user.
 func TestResumeMessagesDropsAllLeadingIfNeverAnswered(t *testing.T) {
 	records := []chat.Record{{Role: "user", Text: "единственный вопрос"}}
-	got := resumeMessages(records)
+	got := ResumeMessages(records)
 	if len(got) != 0 {
-		t.Fatalf("resumeMessages = %+v, ожидалась пустая история", got)
+		t.Fatalf("ResumeMessages = %+v, ожидалась пустая история", got)
 	}
 }
 
@@ -82,12 +82,12 @@ func TestResumeMessagesSkipsEmptyAssistantText(t *testing.T) {
 		{Role: "user", Text: "повтори"},
 		{Role: "assistant", Text: "деятельность души"},
 	}
-	got := resumeMessages(records)
+	got := ResumeMessages(records)
 	if len(got) != 3 {
-		t.Fatalf("resumeMessages = %+v, ожидалось 3 сообщения (пустой ответ пропущен)", got)
+		t.Fatalf("ResumeMessages = %+v, ожидалось 3 сообщения (пустой ответ пропущен)", got)
 	}
 	if got[0].Text != "что такое счастье" || got[1].Text != "повтори" || got[2].Text != "деятельность души" {
-		t.Fatalf("resumeMessages = %+v", got)
+		t.Fatalf("ResumeMessages = %+v", got)
 	}
 }
 
@@ -98,15 +98,15 @@ func TestResumeMessagesSkipsUnknownRoles(t *testing.T) {
 		{Role: "system", Text: "тоже не наша роль"},
 		{Role: "assistant", Text: "ответ"},
 	}
-	got := resumeMessages(records)
+	got := ResumeMessages(records)
 	if len(got) != 2 || got[0].Text != "х" || got[1].Text != "ответ" {
-		t.Fatalf("resumeMessages = %+v, ожидались только записи user и assistant", got)
+		t.Fatalf("ResumeMessages = %+v, ожидались только записи user и assistant", got)
 	}
 }
 
 func TestResumeMessagesEmptyGivesEmpty(t *testing.T) {
-	if got := resumeMessages(nil); len(got) != 0 {
-		t.Fatalf("resumeMessages(nil) = %+v", got)
+	if got := ResumeMessages(nil); len(got) != 0 {
+		t.Fatalf("ResumeMessages(nil) = %+v", got)
 	}
 }
 
@@ -120,14 +120,14 @@ func TestLastUserMessageFindsMostRecent(t *testing.T) {
 		{Role: provider.RoleUser, Text: "второй вопрос"},
 		{Role: provider.RoleAssistant, Text: "второй ответ"},
 	}
-	if got := lastUserMessage(msgs); got != "второй вопрос" {
-		t.Fatalf("lastUserMessage = %q, ожидалось %q", got, "второй вопрос")
+	if got := LastUserMessage(msgs); got != "второй вопрос" {
+		t.Fatalf("LastUserMessage = %q, ожидалось %q", got, "второй вопрос")
 	}
 }
 
 func TestLastUserMessageEmptyHistoryGivesEmptyString(t *testing.T) {
-	if got := lastUserMessage(nil); got != "" {
-		t.Fatalf("lastUserMessage(nil) = %q, ожидалась пустая строка", got)
+	if got := LastUserMessage(nil); got != "" {
+		t.Fatalf("LastUserMessage(nil) = %q, ожидалась пустая строка", got)
 	}
 }
 
@@ -147,8 +147,8 @@ func TestLastUserMessageSkipsToolResultCarriers(t *testing.T) {
 		{Role: provider.RoleUser, ToolResults: []provider.ToolResult{{ID: "c1", Content: "..."}}},
 		{Role: provider.RoleAssistant, Text: "эвдемония — деятельность души"},
 	}
-	if got := lastUserMessage(msgs); got != "что такое эвдемония" {
-		t.Fatalf("lastUserMessage = %q, ожидалось %q (результат инструмента не должен считаться вопросом)",
+	if got := LastUserMessage(msgs); got != "что такое эвдемония" {
+		t.Fatalf("LastUserMessage = %q, ожидалось %q (результат инструмента не должен считаться вопросом)",
 			got, "что такое эвдемония")
 	}
 }
@@ -164,7 +164,7 @@ func TestSwitchProfileKnownChangesProvider(t *testing.T) {
 	p.KeyEnv = "ARISTOTLE_TEST_DEEPSEEK_KEY"
 	cfg.Profiles["deepseek"] = p
 
-	profile, prov, err := switchProfile(cfg, "deepseek")
+	profile, prov, err := SwitchProfile(cfg, "deepseek")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestSwitchProfileKnownChangesProvider(t *testing.T) {
 // ничего у вызывающей стороны (она просто не подставит нулевые значения).
 func TestSwitchProfileUnknownReturnsError(t *testing.T) {
 	cfg := config.Builtin()
-	profile, prov, err := switchProfile(cfg, "нет-такого-профиля")
+	profile, prov, err := SwitchProfile(cfg, "нет-такого-профиля")
 	if err == nil {
 		t.Fatal("ожидалась ошибка для неизвестного профиля")
 	}
@@ -202,7 +202,7 @@ func TestSwitchProfileMissingKeyReturnsError(t *testing.T) {
 	cfg.Profiles["claude"] = p
 	os.Unsetenv(p.KeyEnv)
 
-	_, prov, err := switchProfile(cfg, "claude")
+	_, prov, err := SwitchProfile(cfg, "claude")
 	if err == nil {
 		t.Fatal("ожидалась ошибка при отсутствии ключа")
 	}
@@ -213,13 +213,49 @@ func TestSwitchProfileMissingKeyReturnsError(t *testing.T) {
 
 func TestProfileNamesSortedAndComplete(t *testing.T) {
 	cfg := config.Builtin()
-	names := profileNames(cfg)
+	names := ProfileNames(cfg)
 	if len(names) != len(cfg.Profiles) {
-		t.Fatalf("profileNames вернул %d имён, ожидалось %d", len(names), len(cfg.Profiles))
+		t.Fatalf("ProfileNames вернул %d имён, ожидалось %d", len(names), len(cfg.Profiles))
 	}
 	for i := 1; i < len(names); i++ {
 		if names[i-1] > names[i] {
 			t.Fatalf("список не отсортирован: %v", names)
 		}
+	}
+}
+
+func TestDefaultPathsUnderHome(t *testing.T) {
+	t.Setenv("HOME", "/home/тест")
+	p, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Config != "/home/тест/.config/aristotle/config.json" ||
+		p.Keys != "/home/тест/.config/aristotle/keys.json" ||
+		p.History != "/home/тест/.local/share/aristotle" {
+		t.Fatalf("пути = %+v", p)
+	}
+}
+
+func TestNewHistoryPathIsUTCStamp(t *testing.T) {
+	msk := time.FixedZone("MSK", 3*3600)
+	got := NewHistoryPath("/жур", time.Date(2026, 11, 18, 13, 4, 5, 0, msk))
+	if got != "/жур/2026-11-18T10-04-05.jsonl" {
+		t.Fatalf("NewHistoryPath = %q", got)
+	}
+}
+
+func TestDropLastTurnRemovesFromLastQuestion(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Text: "первый"},
+		{Role: provider.RoleAssistant, Text: "ответ"},
+		{Role: provider.RoleUser, Text: "второй"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "t"}}},
+		{Role: provider.RoleUser, ToolResults: []provider.ToolResult{{ID: "t"}}},
+		{Role: provider.RoleAssistant, Text: "второй ответ"},
+	}
+	got := DropLastTurn(msgs)
+	if len(got) != 2 || got[1].Text != "ответ" {
+		t.Fatalf("DropLastTurn = %+v", got)
 	}
 }
