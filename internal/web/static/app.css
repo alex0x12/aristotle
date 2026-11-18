@@ -1,29 +1,38 @@
 /* Аристотель — веб-интерфейс. Стиль A2 «фреска»: только чёрно-белое,
    музейные изображения из общественного достояния (SOURCES.md),
-   шрифты под OFL (fonts/OFL-*.txt). */
+   шрифт Alegreya под OFL (fonts/OFL-Alegreya.txt). */
 
-@font-face { font-family: 'Forum'; src: url('fonts/forum.woff2') format('woff2'); font-display: swap; }
-@font-face { font-family: 'EB Garamond'; src: url('fonts/eb-garamond.woff2') format('woff2');
-  font-weight: 400 800; font-style: normal; font-display: swap; }
-@font-face { font-family: 'EB Garamond'; src: url('fonts/eb-garamond-italic.woff2') format('woff2');
-  font-weight: 400 800; font-style: italic; font-display: swap; }
+/* Один шрифт и две переменные гарнитуры с осью веса: текст набран весом 500,
+   подписи — 600. Тонкие линии светлого на тёмном «ломаются», поэтому вес
+   выше обычного, а размеры крупнее прежних. */
+@font-face { font-family: 'Alegreya'; src: url('fonts/alegreya.woff2') format('woff2');
+  font-weight: 400 900; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Alegreya'; src: url('fonts/alegreya-italic.woff2') format('woff2');
+  font-weight: 400 900; font-style: italic; font-display: swap; }
 
 :root {
   --ink: #0b0b0a; --bone: #e9e6df; --soft: #cfcbc2; --ash: #9b978e; --dim: #6f6c65;
+  --lbl: #b3afa6; /* цвет малых подписей: светлее --ash, чтобы тонкие прописные не терялись */
   --line: rgba(233,230,223,.22); --glass: rgba(8,8,7,.80);
-  /* У Forum нет греческого: заглавные ΑΡΙΣΤΟΤΕΛΗΣ берутся из EB Garamond. */
-  --caps: 'Forum', 'EB Garamond', serif;
-  --text: 'EB Garamond', serif;
+  --text: 'Alegreya', serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
-body { background: var(--ink); color: var(--bone); font: 16px/1.5 var(--text); overflow: hidden; }
+body { background: var(--ink); color: var(--bone); font: 500 18.5px/1.55 var(--text); overflow: hidden; }
 button, input, select, textarea { font: inherit; color: inherit; }
 a { color: inherit; }
 [hidden] { display: none !important; }
 ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-thumb { background: rgba(233,230,223,.25); }
 * { scrollbar-width: thin; scrollbar-color: rgba(233,230,223,.25) transparent; }
+
+/* Малые подписи: тот же Alegreya, но прописными, весом 600 и с разрядкой.
+   Размер и цвет у каждой свои, ниже; здесь только общее. Правила ниже стоят
+   позже и при равной специфичности перебивают этот список. */
+.logo small, .side h4, .cap, .newc, .side-links, .dialog-head, blockquote.quote cite, .note .tag, .lead .tag,
+.trimline, .btn, .src h5, .src h6, .src .state, .src .lib-link, .library .works h4, .library .book,
+.reader h2, .reader .hit b, .badge, .tabs, .card h3, table.usage th {
+  font-weight: 600; letter-spacing: .12em; text-transform: uppercase; font-size: 12.5px; }
 
 /* фон: «Афинская школа», затемнённая */
 .bg { position: fixed; inset: 0; background: url('img/school-of-athens.jpg') 50% 42% / cover no-repeat;
@@ -40,14 +49,15 @@ a { color: inherit; }
   filter: grayscale(1) contrast(1.2) brightness(.62); }
 .over { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 26px;
   background: linear-gradient(90deg, rgba(0,0,0,.85) 0, rgba(0,0,0,.2) 35%, rgba(0,0,0,.2) 62%, rgba(0,0,0,.85) 100%); }
-.logo { font-family: var(--caps); letter-spacing: .4em; font-size: 26px; text-decoration: none; text-shadow: 0 2px 6px #000; }
-.logo small { display: block; font-size: 11px; letter-spacing: .3em; color: #b9b5ac; margin-top: 2px; }
-.meter { font-size: 12.5px; text-align: right; color: var(--soft); line-height: 1.7; text-shadow: 0 1px 4px #000; }
+/* Греческие заглавные ΑΡΙΣΤΟΤΕΛΗΣ берутся из самого Alegreya; разрядка прежняя. */
+.logo { font-weight: 500; letter-spacing: .4em; font-size: 26px; text-decoration: none; text-shadow: 0 2px 6px #000; }
+.logo small { display: block; color: #b9b5ac; margin-top: 2px; }
+.meter { font-size: 14px; text-align: right; color: var(--soft); line-height: 1.6; text-shadow: 0 1px 4px #000; }
 .meter select { appearance: none; background: transparent; border: 0; border-bottom: 1px dotted rgba(207,203,194,.5);
   padding: 0 2px; margin-right: 6px; text-align: right; text-align-last: right; cursor: pointer; text-shadow: inherit; }
 .meter select:hover { border-bottom-color: var(--bone); }
 .meter option { background: var(--ink); color: var(--bone); }
-#usage-line { display: inline-block; min-height: 1.7em; }
+#usage-line { display: inline-block; min-height: 1.6em; }
 .bar { display: inline-block; width: 120px; height: 6px; border: 1px solid var(--soft); vertical-align: middle; margin-left: 6px; position: relative; }
 .bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--bone); }
 .bar.exceeded i { background: repeating-linear-gradient(45deg, var(--bone) 0 3px, transparent 3px 6px); }
@@ -56,12 +66,12 @@ a { color: inherit; }
 .body { flex: 1; display: flex; min-height: 0; gap: 14px; padding: 14px; }
 .panel { background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(2px); }
 
-.side { width: 220px; flex-shrink: 0; padding: 16px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; min-height: 0; }
-.side h4 { font-family: var(--caps); letter-spacing: .28em; font-size: 11px; color: var(--ash); font-weight: 400; margin: 10px 0 4px; }
+.side { width: 220px; flex-shrink: 0; padding: 16px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 17px; min-height: 0; }
+.side h4 { color: var(--lbl); margin: 10px 0 4px; }
 .medal { width: 128px; height: 128px; margin: 0 auto; flex-shrink: 0; border-radius: 50%; border: 2px solid var(--bone);
   box-shadow: 0 0 0 5px var(--ink), 0 0 0 6px rgba(233,230,223,.5);
   background: #1a1a18 url('img/aristotle-bust.png') center 18% / 118% no-repeat; filter: grayscale(1) contrast(1.1); }
-.cap { text-align: center; font-family: var(--caps); letter-spacing: .2em; font-size: 11px; color: #b9b5ac; margin-top: 8px; }
+.cap { text-align: center; color: #b9b5ac; margin-top: 8px; }
 .convs { flex: 0 1 auto; overflow-y: auto; min-height: 0; }
 .conv { display: flex; align-items: baseline; gap: 6px; padding: 2px 0 2px 9px; border-left: 2px solid transparent;
   opacity: .7; cursor: pointer; text-decoration: none; }
@@ -70,63 +80,62 @@ a { color: inherit; }
 .conv .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conv .del { visibility: hidden; background: none; border: none; color: var(--ash); cursor: pointer; }
 .conv:hover .del { visibility: visible; }
-.newc { margin-top: 6px; font-family: var(--caps); letter-spacing: .15em; font-size: 12px; background: transparent;
+.newc { margin-top: 6px; font-size: 13px; background: transparent;
   border: 1px solid rgba(233,230,223,.4); padding: 5px; cursor: pointer; }
 .newc:hover { border-color: var(--bone); }
-.side-links { font-family: var(--caps); letter-spacing: .2em; font-size: 11px; color: var(--ash); margin-top: auto; text-align: center; }
+/* «БИБЛИОТЕКА · НАСТРОЙКИ» при .12em — 196 px и не лезет в 190 px панели: разрядка у этой строки .08em */
+.side-links { color: var(--lbl); margin-top: auto; text-align: center; letter-spacing: .08em; }
 .side-links a { text-decoration: none; } .side-links a:hover { color: var(--bone); }
 
 /* центр: беседа */
 .center { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .dialog { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 18px 30px; gap: 12px; }
-.dialog-head { display: flex; justify-content: space-between; font-family: var(--caps); letter-spacing: .2em; font-size: 12px; color: var(--ash); }
-.dialog-head a { text-decoration: none; } .dialog-head a:hover { color: var(--bone); }
+.dialog-head { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; color: var(--lbl); }
+/* прописной заголовок длиннее обычного: длинное название обрезается, а «ЭКСПОРТ .MD» не переносится */
+.dialog-head #conv-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dialog-head a { flex: none; white-space: nowrap; text-decoration: none; } .dialog-head a:hover { color: var(--bone); }
 .msgs { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 13px; padding-right: 6px; }
 .turn { display: flex; flex-direction: column; gap: 10px; }
 .turn.unseen { opacity: .45; }
-.q { align-self: flex-end; max-width: 80%; border: 1px solid rgba(233,230,223,.3); padding: 7px 14px; color: var(--soft);
+.q { align-self: flex-end; max-width: 80%; border: 1px solid rgba(233,230,223,.3); padding: 8px 15px; color: var(--soft);
   background: rgba(0,0,0,.4); white-space: pre-wrap; }
-.ans { line-height: 1.5; }
-.ans p { margin: 0 0 8px; }
+.ans p { margin: 0 0 10px; }
 .ans .live { color: var(--soft); }
 .ans .live:empty { display: none; }
 .ans .live.marker { color: var(--dim); }
 .ans .stopped { color: var(--ash); font-style: italic; }
-blockquote.quote { margin: 7px 0; padding: 3px 0 3px 15px; border-left: 2px solid var(--bone); font-style: italic; cursor: pointer; }
+blockquote.quote { margin: 8px 0; padding: 3px 0 3px 16px; border-left: 2px solid var(--bone); font-style: italic; cursor: pointer; }
 blockquote.quote:hover { background: rgba(233,230,223,.05); }
 blockquote.quote.bad { border-left-style: dashed; }
-blockquote.quote cite { display: block; font-style: normal; font-family: var(--caps); letter-spacing: .14em; font-size: 12px;
-  color: var(--ash); margin-top: 3px; text-transform: uppercase; }
-.warn { color: var(--bone); border: 1px solid var(--bone); padding: 0 4px; margin-left: 8px; letter-spacing: .08em; text-transform: none; }
-.unk { color: var(--dim); margin-left: 8px; text-transform: none; letter-spacing: .05em; }
-.note .tag, .lead .tag { font-family: var(--caps); letter-spacing: .12em; font-size: 11px; border: 1px solid #8a867e; color: var(--soft);
-  padding: 0 5px; margin-right: 4px; }
-.meta-line { font-size: 12px; color: var(--dim); }
-.status { font-size: 12.5px; color: var(--ash); font-style: italic; }
-.banner { border: 1px solid var(--bone); padding: 6px 12px; font-size: 13.5px; background: rgba(0,0,0,.5); }
-.trimline { text-align: center; font-family: var(--caps); letter-spacing: .2em; font-size: 11px; color: var(--ash);
-  border-top: 1px solid var(--line); padding-top: 6px; }
+blockquote.quote cite { display: block; font-style: normal; color: var(--lbl); margin-top: 4px; }
+.warn { color: var(--bone); border: 1px solid var(--bone); padding: 0 5px; margin-left: 8px; letter-spacing: .06em; text-transform: none; }
+.unk { color: var(--ash); margin-left: 8px; text-transform: none; letter-spacing: .04em; }
+.note .tag, .lead .tag { border: 1px solid #8f8b83; color: var(--soft); padding: 0 6px; margin-right: 6px; }
+.meta-line { font-size: 13.5px; color: var(--ash); }
+.status { font-size: 14.5px; color: var(--ash); font-style: italic; }
+.banner { border: 1px solid var(--bone); padding: 6px 12px; font-size: 15px; background: rgba(0,0,0,.5); }
+.trimline { text-align: center; color: var(--lbl); border-top: 1px solid var(--line); padding-top: 6px; }
 .input { display: flex; gap: 10px; flex-shrink: 0; }
 .input textarea { flex: 1; resize: none; border: 1px solid rgba(233,230,223,.35); padding: 10px 14px; background: rgba(0,0,0,.5);
-  min-height: 44px; max-height: 180px; field-sizing: content; }
+  min-height: 44px; max-height: 200px; field-sizing: content; }
 .input textarea::placeholder { color: var(--dim); opacity: 1; }
 .input textarea:focus { outline: none; border-color: var(--bone); }
-.btn { font-family: var(--caps); letter-spacing: .2em; border: 1px solid var(--bone); background: transparent; padding: 0 16px;
-  font-size: 13px; cursor: pointer; }
+.btn { border: 1px solid var(--bone); background: transparent; padding: 0 16px; font-size: 13px; cursor: pointer; }
 .btn:hover { background: rgba(233,230,223,.08); }
 .btn:disabled { opacity: .35; cursor: default; }
 .btn.ghost { border-color: rgba(233,230,223,.4); color: var(--soft); }
 
 /* приветствие */
 .welcome { margin: auto; text-align: center; max-width: 600px; }
-.welcome .bust { width: 200px; height: 250px; margin: 0 auto 14px; background: url('img/aristotle-bust.png') center top / contain no-repeat;
+/* бюст 170×212 (было 200×250): при крупном шрифте приветствие иначе не помещалось в окно 1280×800 */
+.welcome .bust { width: 170px; height: 212px; margin: 0 auto 14px; background: url('img/aristotle-bust.png') center top / contain no-repeat;
   filter: grayscale(1) contrast(1.1) drop-shadow(0 6px 18px #000);
   -webkit-mask-image: linear-gradient(#000 72%, transparent); mask-image: linear-gradient(#000 72%, transparent); }
-.welcome .lead { font-size: 14px; color: var(--soft); }
+.welcome .lead { font-size: 16.5px; color: var(--soft); }
 .welcome .lead .tag { margin-right: 0; }
 .examples { list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
 .examples li { display: flex; }
-.examples button { flex: 1; background: rgba(0,0,0,.45); border: 1px solid var(--line); padding: 8px 10px; cursor: pointer; text-align: left; }
+.examples button { flex: 1; background: rgba(0,0,0,.45); border: 1px solid var(--line); padding: 8px 10px; cursor: pointer; text-align: left; font-size: 17px; line-height: 1.4; }
 .examples button:hover { border-color: var(--bone); }
 
 /* источники: амфора Эксекия проступает снизу */
@@ -134,19 +143,21 @@ blockquote.quote cite { display: block; font-style: normal; font-family: var(--c
 .src .vase { position: absolute; left: -20px; right: -20px; bottom: -10px; height: 210px;
   background: url('img/exekias-amphora.jpg') center 40% / cover no-repeat; filter: grayscale(1) contrast(1.2) brightness(.55); opacity: .5;
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 60%); mask-image: linear-gradient(to bottom, transparent, #000 60%); }
-.src .in { position: relative; padding: 16px; font-size: 13.5px; line-height: 1.5; overflow-y: auto; flex: 1; }
-.src h5 { font-family: var(--caps); letter-spacing: .25em; font-size: 11px; color: var(--ash); font-weight: 400; }
-.src h6 { font-family: var(--caps); letter-spacing: .14em; font-size: 14px; font-weight: 400; margin: 4px 0 10px; text-transform: uppercase; }
-/* английская ссылка под русским названием: мельче, без заглавных */
-.src h6 small { display: block; font-size: .8em; letter-spacing: .08em; color: var(--ash); text-transform: none; margin-top: 3px; }
-.src .close { position: absolute; top: 8px; right: 12px; background: none; border: none; font-size: 18px; color: var(--ash); cursor: pointer; }
+.src .in { position: relative; padding: 16px; font-size: 16px; line-height: 1.5; overflow-y: auto; flex: 1; }
+.src h5 { color: var(--lbl); }
+.src h6 { font-size: 15px; margin: 4px 0 10px; }
+/* английская ссылка под русским названием: мельче (14 px против 15), без заглавных и весом текста */
+.src h6 small { display: block; font-size: 14px; font-weight: 500; letter-spacing: .03em; color: var(--ash); text-transform: none; margin-top: 3px; }
+/* крестик 32×32: строка с «×» в 26 px выше обычной коробки кнопки и вылезала за неё */
+.src .close { position: absolute; top: 4px; right: 8px; width: 32px; height: 32px; padding: 0; background: none; border: none;
+  font-size: 26px; line-height: 32px; color: var(--ash); cursor: pointer; }
 .src .ru { font-style: italic; margin-bottom: 6px; }
-.src .state { font-family: var(--caps); letter-spacing: .12em; font-size: 11px; margin-bottom: 10px; }
+.src .state { margin-bottom: 10px; }
 .src .state.bad { border: 1px solid var(--bone); display: inline-block; padding: 0 5px; }
 .src .en { font-style: italic; color: var(--soft); border-left: 1px solid var(--line); padding-left: 10px; margin: 8px 0; }
 .src .chapter p { margin-bottom: 8px; }
 .src mark, .reader mark { background: var(--bone); color: var(--ink); padding: 0 2px; }
-.src .lib-link { font-family: var(--caps); letter-spacing: .15em; font-size: 11px; margin-top: 10px; }
+.src .lib-link { margin-top: 10px; }
 
 /* библиотека (задача 9) и настройки (задача 10) */
 .library { flex: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -158,49 +169,53 @@ blockquote.quote cite { display: block; font-style: normal; font-family: var(--c
 .library .search input::placeholder { color: var(--dim); opacity: 1; }
 .library .search input:focus { outline: none; border-color: var(--bone); }
 .library .cols { flex: 1; display: flex; min-height: 0; }
-.library .works { width: 290px; flex-shrink: 0; overflow-y: auto; padding: 4px 16px 12px; border-right: 1px solid var(--line); font-size: 14px; }
-.library .works h4 { font-family: var(--caps); letter-spacing: .25em; font-size: 11px; color: var(--ash); font-weight: 400; margin: 12px 0 4px; }
-.library .work > button { display: flex; align-items: baseline; gap: 8px; background: none; border: none; text-align: left;
-  cursor: pointer; padding: 2px 0; width: 100%; }
+.library .works { width: 290px; flex-shrink: 0; overflow-y: auto; padding: 4px 16px 12px; border-right: 1px solid var(--line); font-size: 16.5px; }
+.library .works h4 { color: var(--lbl); margin: 12px 0 4px; }
+.library .work > button { display: grid; grid-template-columns: 5px 1fr; align-items: baseline; column-gap: 8px; background: none; border: none;
+  text-align: left; cursor: pointer; padding: 2px 0; width: 100%; }
 .library .work > button:hover { color: #fff; }
 /* стрелка раскрытия — граница квадрата, без символов шрифта */
-.library .work > button::before { content: ''; flex: none; width: 5px; height: 5px; border-right: 1px solid var(--ash);
+.library .work > button::before { content: ''; width: 5px; height: 5px; border-right: 1px solid var(--ash);
   border-bottom: 1px solid var(--ash); transform: translateY(-2px) rotate(-45deg); transition: transform .12s; }
 .library .work > button[aria-expanded="true"]::before { transform: translateY(-3px) rotate(45deg); }
+/* метка подлинности — отдельной строкой под названием: рядом с ним в 258 px она не помещалась */
+.library .work > button .badge { grid-column: 2; justify-self: start; margin: 3px 0 0; }
 /* в списке работ русское название главное, английское — второй строкой мельче */
-.library .work > button .wt small { display: block; font-size: .82em; color: var(--ash); }
+.library .work > button .wt small { display: block; font-size: 14px; color: var(--ash); }
 .library .chapters { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 8px 13px; }
-.library .chapters a { font-size: 12px; text-decoration: none; border: 1px solid var(--line); padding: 0 5px; }
+.library .chapters a { font-size: 14px; text-decoration: none; border: 1px solid var(--line); padding: 0 6px; }
 .library .chapters a.on, .library .chapters a:hover { border-color: var(--bone); }
 .library .chapters a.on { background: rgba(233,230,223,.16); }
-.library .book { font-family: var(--caps); letter-spacing: .15em; font-size: 11px; color: var(--ash); width: 100%; margin-top: 3px; }
+.library .book { color: var(--lbl); width: 100%; margin-top: 3px; }
 .reader { flex: 1; overflow-y: auto; padding: 18px 30px; }
-.reader h2 { font-family: var(--caps); letter-spacing: .2em; font-weight: 400; font-size: 18px; margin-bottom: 4px; text-transform: uppercase; }
-.reader .sub { color: var(--ash); font-size: 13px; margin-bottom: 14px; }
-/* длинная строка английского текста утомляет: колонка в рамках 46 em */
-.reader p, .reader .sub { max-width: 46em; }
+.reader h2 { font-size: 19px; margin-bottom: 4px; }
+.reader .sub { color: var(--ash); font-size: 15px; margin-bottom: 14px; }
+/* длинная строка английского текста утомляет: колонка в рамках 40 em
+   (≈ 740 px при 18,5 px; при прежнем шрифте в 16 px было 46 em) */
+.reader p, .reader .sub { max-width: 40em; }
 .reader p { margin-bottom: 10px; }
 .reader .hit { display: block; text-decoration: none; border-bottom: 1px solid var(--line); padding: 9px 6px; }
 .reader .hit:hover { background: rgba(233,230,223,.05); }
-.reader .hit b { font-family: var(--caps); letter-spacing: .12em; font-weight: 400; font-size: 13px; text-transform: uppercase; }
-.reader .hit small { font-size: .8em; color: var(--ash); margin-left: 8px; }
-.reader .hit .snip { display: block; color: var(--soft); font-size: 14px; margin-top: 2px; }
-.reader .banner { max-width: 46em; }
-.badge { font-family: var(--caps); font-size: 10px; letter-spacing: .12em; border: 1px solid var(--dim); color: var(--ash); padding: 0 4px; margin-left: 6px; }
+.reader .hit b { font-size: 14.5px; }
+/* английская ссылка в выдаче остаётся мельче русского заголовка записи (14,5 px против 13,5) */
+.reader .hit small { font-size: 13.5px; color: var(--ash); margin-left: 8px; }
+.reader .hit .snip { display: block; color: var(--soft); font-size: 16px; margin-top: 2px; }
+.reader .banner { max-width: 40em; }
+.badge { font-size: 11.5px; letter-spacing: .08em; border: 1px solid var(--dim); color: var(--ash); padding: 0 5px; margin-left: 6px; }
 
 .settings { flex: 1; overflow-y: auto; padding: 18px 30px; }
-.tabs { display: flex; gap: 18px; font-family: var(--caps); letter-spacing: .2em; font-size: 12px; margin-bottom: 14px; }
-.tabs button { background: none; border: none; border-bottom: 1px solid transparent; color: var(--ash); cursor: pointer; padding-bottom: 3px; }
+.tabs { display: flex; gap: 18px; font-size: 13px; margin-bottom: 14px; }
+/* у button в таблице стилей браузера свои letter-spacing и text-transform: подпись вкладки их наследует явно */
+.tabs button { letter-spacing: inherit; text-transform: inherit; background: none; border: none; border-bottom: 1px solid transparent; color: var(--ash); cursor: pointer; padding-bottom: 3px; }
 .tabs button.on { color: var(--bone); border-bottom-color: var(--bone); }
 .card { border: 1px solid var(--line); padding: 12px 14px; margin-bottom: 12px; background: rgba(0,0,0,.35); }
-.card h3 { font-family: var(--caps); letter-spacing: .2em; font-size: 14px; font-weight: 400; margin-bottom: 8px; }
-.grid { display: grid; grid-template-columns: 190px 1fr; gap: 6px 12px; align-items: center; font-size: 14px; }
+.card h3 { font-size: 14px; margin-bottom: 8px; }
+.grid { display: grid; grid-template-columns: 190px 1fr; gap: 6px 12px; align-items: center; font-size: 16.5px; }
 .grid input, .grid select { background: rgba(0,0,0,.5); border: 1px solid var(--line); padding: 3px 8px; }
 .grid .prices { display: flex; gap: 6px; } .grid .prices input { width: 90px; }
-.hint { color: var(--ash); font-size: 12.5px; }
+.hint { color: var(--ash); font-size: 14.5px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
-table.usage { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-table.usage th { font-family: var(--caps); letter-spacing: .15em; font-weight: 400; font-size: 11px; color: var(--ash);
-  text-align: right; border-bottom: 1px solid var(--line); padding: 4px 8px; }
+table.usage { width: 100%; border-collapse: collapse; font-size: 15px; }
+table.usage th { color: var(--ash); text-align: right; border-bottom: 1px solid var(--line); padding: 4px 8px; }
 table.usage td { text-align: right; padding: 3px 8px; border-bottom: 1px solid rgba(233,230,223,.08); font-variant-numeric: tabular-nums; }
 table.usage th:first-child, table.usage td:first-child, table.usage td:nth-child(2) { text-align: left; }

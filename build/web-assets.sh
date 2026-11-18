@@ -21,25 +21,29 @@ img exekias-amphora.jpg   'https://thumb.wikimedia.org/wikipedia/commons/thumb/a
 img academy-mosaic.jpg    'https://thumb.wikimedia.org/wikipedia/commons/thumb/8/84/MANNapoli_124545_plato%27s_academy_mosaic_%28cropped%29.jpg/1280px-MANNapoli_124545_plato%27s_academy_mosaic_%28cropped%29.jpg'
 
 gf=https://raw.githubusercontent.com/google/fonts/main/ofl
-font() { curl -fsSL -o "$work/$1" "$2"; }
-font Forum-Regular.ttf             "$gf/forum/Forum-Regular.ttf"
-font EBGaramond.ttf                "$gf/ebgaramond/EBGaramond%5Bwght%5D.ttf"
-font EBGaramond-Italic.ttf         "$gf/ebgaramond/EBGaramond-Italic%5Bwght%5D.ttf"
-curl -fsSL -o "$out/fonts/OFL-Forum.txt"      "$gf/forum/OFL.txt"
-curl -fsSL -o "$out/fonts/OFL-EBGaramond.txt" "$gf/ebgaramond/OFL.txt"
+font() { curl -fsSL -A "$ua" -o "$work/$1" "$2"; }
+# Alegreya — единственный шрифт интерфейса: два переменных файла (прямой и
+# курсив) с осью веса wght 400–900.
+font Alegreya.ttf        "$gf/alegreya/Alegreya%5Bwght%5D.ttf"
+font Alegreya-Italic.ttf "$gf/alegreya/Alegreya-Italic%5Bwght%5D.ttf"
+curl -fsSL -A "$ua" -o "$out/fonts/OFL-Alegreya.txt" "$gf/alegreya/OFL.txt"
 
-# Латиница, кириллица, общая пунктуация, №, ≈ (приблизительная сумма токенов);
-# греческий и греческий расширенный (политоника: ἔθος) — только для
-# EB Garamond: у Forum его нет.
+# Латиница, кириллица, общая пунктуация, №, ≈ (приблизительная сумма токенов),
+# греческий и греческий расширенный (политоника: ἔθος; заглавные логотипа).
 base='U+0000-00FF,U+0100-017F,U+0300-036F,U+0400-04FF,U+2000-206F,U+2116,U+2248'
 greek='U+0370-03FF,U+1F00-1FFF'
+# Ось веса должна пережить подрезку: без неё 500 и 600 нарисуются одинаково,
+# и подписи потеряют вес, ради которого шрифт и менялся.
+has_wght() {
+	python3 -I -c 'import sys; from fontTools.ttLib import TTFont; f = TTFont(sys.argv[1]); sys.exit(0 if "fvar" in f and any(a.axisTag == "wght" for a in f["fvar"].axes) else 1)' "$1"
+}
 subset() {
 	pyftsubset "$work/$1" --unicodes="$2" --layout-features='*' --output-file="$work/$3.ttf"
+	has_wght "$work/$3.ttf" || { echo "подрезка потеряла ось wght: $3" >&2; exit 1; }
 	woff2_compress "$work/$3.ttf" >/dev/null
 	mv "$work/$3.woff2" "$out/fonts/$3.woff2"
 }
-subset Forum-Regular.ttf     "$base"          forum
-subset EBGaramond.ttf        "$base,$greek"   eb-garamond
-subset EBGaramond-Italic.ttf "$base,$greek"   eb-garamond-italic
+subset Alegreya.ttf        "$base,$greek" alegreya
+subset Alegreya-Italic.ttf "$base,$greek" alegreya-italic
 
 ls -l "$out/img" "$out/fonts"

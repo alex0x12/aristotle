@@ -62,7 +62,7 @@ func TestIndexIsServed(t *testing.T) {
 
 func TestFontsAreServedAsWoff2(t *testing.T) {
 	h := newTestServer(t, nil, nil).Handler()
-	for _, name := range []string{"forum", "eb-garamond", "eb-garamond-italic"} {
+	for _, name := range []string{"alegreya", "alegreya-italic"} {
 		rec := do(t, h, http.MethodGet, "/static/fonts/"+name+".woff2", "")
 		if rec.Code != 200 {
 			t.Fatalf("%s: код %d, ожидался 200", name, rec.Code)
@@ -90,7 +90,7 @@ func TestStaticDirectoriesAreNotListed(t *testing.T) {
 		}
 	}
 	// Сами файлы по-прежнему отдаются.
-	if rec := do(t, h, http.MethodGet, "/static/fonts/OFL-Forum.txt", ""); rec.Code != 200 {
+	if rec := do(t, h, http.MethodGet, "/static/fonts/OFL-Alegreya.txt", ""); rec.Code != 200 {
 		t.Errorf("файл внутри каталога: код %d, ожидался 200", rec.Code)
 	}
 }
