@@ -77,12 +77,22 @@ func NewProvider(p config.Profile) (provider.Provider, error) {
 	}
 }
 
+// envKeySet — задана ли переменная окружения с ключом профиля.
+func envKeySet(p config.Profile) bool {
+	return p.KeyEnv != "" && os.Getenv(p.KeyEnv) != ""
+}
+
 // Resolve — профиль по имени с ключом из keys.json. Переменная окружения
-// профиля всё равно важнее: это решает config.Profile.APIKey.
+// профиля важнее: когда она задана, файл не читается вовсе, чтобы испорченный
+// keys.json не ломал запуск и /model тому, у кого ключ в окружении. Ошибка
+// чтения файла доходит до вызывающего, только если окружение ключа не даёт.
 func Resolve(cfg config.Config, store keys.Store, name string) (config.Profile, error) {
 	p, err := cfg.Resolve(name)
 	if err != nil {
 		return config.Profile{}, err
+	}
+	if envKeySet(p) {
+		return p, nil
 	}
 	key, err := store.Get(p.Name)
 	if err != nil {
@@ -95,7 +105,7 @@ func Resolve(cfg config.Config, store keys.Store, name string) (config.Profile, 
 // KeySource — откуда возьмётся ключ профиля: "env", "file" или "none".
 func KeySource(p config.Profile) string {
 	switch {
-	case p.KeyEnv != "" && os.Getenv(p.KeyEnv) != "":
+	case envKeySet(p):
 		return "env"
 	case p.Key != "":
 		return "file"

@@ -285,3 +285,77 @@ func TestResolveTakesKeyFromFile(t *testing.T) {
 		t.Fatalf("источник %q", KeySource(got))
 	}
 }
+
+// brokenKeysStore — хранилище с испорченным keys.json во временном каталоге.
+func brokenKeysStore(t *testing.T) keys.Store {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "keys.json")
+	if err := os.WriteFile(path, []byte("{это не json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return keys.Store{Path: path}
+}
+
+// Ключ из переменной окружения не должен зависеть от того, что лежит на
+// диске: испорченный keys.json не вправе ронять ни запуск, ни /model.
+func TestResolveIgnoresBrokenKeysFileWhenEnvSet(t *testing.T) {
+	store := brokenKeysStore(t)
+	cfg := config.Builtin()
+	p := cfg.Profiles["claude"]
+	p.KeyEnv = "ARISTOTLE_TEST_BROKEN_FILE_ENV_SET"
+	cfg.Profiles["claude"] = p
+	t.Setenv(p.KeyEnv, "sk-из-окружения")
+
+	got, err := Resolve(cfg, store, "claude")
+	if err != nil {
+		t.Fatalf("Resolve: ключ есть в окружении, ошибка файла не нужна: %v", err)
+	}
+	if k, _ := got.APIKey(); k != "sk-из-окружения" || KeySource(got) != "env" {
+		t.Fatalf("ключ %q, источник %q", k, KeySource(got))
+	}
+	profile, prov, err := SwitchProfile(cfg, store, "claude")
+	if err != nil || prov == nil || profile.Name != "claude" {
+		t.Fatalf("SwitchProfile: профиль %q, провайдер %v, ошибка %v", profile.Name, prov, err)
+	}
+}
+
+// Без переменной окружения файл — единственный источник, и его ошибка
+// должна дойти до пользователя, а не превратиться в «ключа нет».
+func TestResolveReportsBrokenKeysFileWhenEnvUnset(t *testing.T) {
+	store := brokenKeysStore(t)
+	cfg := config.Builtin()
+	p := cfg.Profiles["claude"]
+	p.KeyEnv = "ARISTOTLE_TEST_BROKEN_FILE_ENV_UNSET"
+	cfg.Profiles["claude"] = p
+	t.Setenv(p.KeyEnv, "")
+
+	if _, err := Resolve(cfg, store, "claude"); err == nil {
+		t.Fatal("Resolve: ожидалась ошибка чтения keys.json")
+	}
+	profile, prov, err := SwitchProfile(cfg, store, "claude")
+	if err == nil || prov != nil || profile.Name != "" {
+		t.Fatalf("SwitchProfile: профиль %q, провайдер %v, ошибка %v", profile.Name, prov, err)
+	}
+}
+
+// Исправный файл при незаданной переменной — ключ из файла, и по нему
+// собирается провайдер.
+func TestSwitchProfileUsesKeyFromFileWhenEnvUnset(t *testing.T) {
+	store := keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}
+	if err := store.Set("claude", "sk-ant-из-файла"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Builtin()
+	p := cfg.Profiles["claude"]
+	p.KeyEnv = "ARISTOTLE_TEST_FILE_KEY_ENV_UNSET"
+	cfg.Profiles["claude"] = p
+	t.Setenv(p.KeyEnv, "")
+
+	profile, prov, err := SwitchProfile(cfg, store, "claude")
+	if err != nil || prov == nil {
+		t.Fatalf("SwitchProfile: провайдер %v, ошибка %v", prov, err)
+	}
+	if KeySource(profile) != "file" {
+		t.Fatalf("источник %q", KeySource(profile))
+	}
+}
