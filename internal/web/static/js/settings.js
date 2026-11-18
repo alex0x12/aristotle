@@ -27,7 +27,9 @@ const FORM = `
       <div class="field"><input id="f-model" type="text" autocomplete="off" spellcheck="false" placeholder="deepseek-flash">
         <p class="hint">Название модели у этого провайдера, например deepseek-flash.</p></div>
       <label for="f-budget">Бюджет контекста</label>
-      <div class="field"><input id="f-budget" type="number" min="0" step="1000" autocomplete="off" placeholder="128000">
+      <div class="field"><div class="stepper"><input id="f-budget" type="number" min="0" step="1" autocomplete="off" placeholder="128000">
+          <button class="btn ghost" id="b-dec" type="button" aria-label="Меньше на 8000" title="Меньше на 8000">–</button>
+          <button class="btn ghost" id="b-inc" type="button" aria-label="Больше на 8000" title="Больше на 8000">+</button></div>
         <p class="hint">Потолок входа запроса в токенах; 0 — без урезания, модели уходит вся беседа.
           Когда беседа превышает потолок, сперва опускаются старые выдержки, потом старые ходы; первый вопрос остаётся.</p></div>
     </div>
@@ -113,6 +115,24 @@ async function settingsTab(box, app) {
       if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('#save').click(); }
     });
   }
+  // Шаг бюджета — свои кнопки и ↑/↓ в поле: родная стрелка браузера серая и
+  // выбивается из оформления (её прячет CSS). Число по-прежнему можно набрать.
+  const STEP = 8000;
+  const bump = dir => {
+    if (busy) return;
+    const raw = f.budget.value.trim();
+    const n = Number(raw);
+    const cur = raw !== '' && Number.isFinite(n) ? Math.round(n) : 0;
+    f.budget.value = String(Math.max(0, cur + dir * STEP));
+    f.budget.dispatchEvent(new Event('input')); // «есть несохранённые изменения»
+  };
+  $('#b-dec').addEventListener('click', () => bump(-1));
+  $('#b-inc').addEventListener('click', () => bump(1));
+  f.budget.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    bump(e.key === 'ArrowUp' ? 1 : -1);
+  });
   els.key.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('#key-save').click(); }
   });

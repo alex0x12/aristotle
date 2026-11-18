@@ -235,3 +235,9 @@ table.usage tr.total td { border-top: 1px solid var(--line); border-bottom: none
 .grid input[type="checkbox"] { justify-self: start; accent-color: var(--bone); }
 .grid input:disabled, .grid select:disabled { opacity: .4; }
 .grid input:focus, .grid select:focus { outline: none; border-color: var(--bone); }
+/* Числовое поле: родную стрелку браузера прячем везде (серая, чужая оформлению);
+   шаг — свои кнопки .stepper, как у остальных кнопок, той же высоты, что поле. */
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.stepper { display: inline-flex; align-items: stretch; gap: 4px; }
+.stepper .btn { padding: 0 12px; font-size: 16px; line-height: 1; }
