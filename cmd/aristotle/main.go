@@ -20,6 +20,9 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "web" {
+		os.Exit(runWeb(os.Args[2:]))
+	}
 	root := flag.String("root", ".", "корень репозитория (persona/ и corpus/)")
 	modelName := flag.String("model", "", "профиль провайдера")
 	resume := flag.String("resume", "", "продолжить беседу из файла истории")

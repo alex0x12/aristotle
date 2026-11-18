@@ -13,7 +13,7 @@ MODEL ?=
 MODEL_FLAG := $(if $(MODEL),-model $(MODEL),)
 
 .DEFAULT_GOAL := help
-.PHONY: help build run test test-go test-py check fmt vet eval eval-recall \
+.PHONY: help build run web test test-go test-py check fmt vet eval eval-recall \
         corpus corpus-force index clean
 
 help: ## Показать эту справку
@@ -35,6 +35,9 @@ build: ## Собрать бинарник
 
 run: build ## Собрать и начать беседу
 	./$(BINARY) $(MODEL_FLAG)
+
+web: build ## Веб-интерфейс на 127.0.0.1:8337
+	./$(BINARY) web
 
 # --- проверки ----------------------------------------------------------------
 
