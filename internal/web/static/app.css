@@ -53,10 +53,8 @@ a { color: inherit; }
 .logo { font-weight: 500; letter-spacing: .4em; font-size: 26px; text-decoration: none; text-shadow: 0 2px 6px #000; }
 .logo small { display: block; color: #b9b5ac; margin-top: 2px; }
 .meter { font-size: 14px; text-align: right; color: var(--soft); line-height: 1.6; text-shadow: 0 1px 4px #000; }
-.meter select { appearance: none; background: transparent; border: 0; border-bottom: 1px dotted rgba(207,203,194,.5);
-  padding: 0 2px; margin-right: 6px; text-align: right; text-align-last: right; cursor: pointer; text-shadow: inherit; }
-.meter select:hover { border-bottom-color: var(--bone); }
-.meter option { background: var(--ink); color: var(--bone); }
+/* Модель в шапке — простой текст: выбирать нечего, она одна и меняется в настройках */
+.meter .model { margin-right: 8px; color: var(--bone); }
 #usage-line { display: inline-block; min-height: 1.6em; }
 .bar { display: inline-block; width: 120px; height: 6px; border: 1px solid var(--soft); vertical-align: middle; margin-left: 6px; position: relative; }
 .bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--bone); }
@@ -229,7 +227,8 @@ table.usage tr.total td { border-top: 1px solid var(--line); border-bottom: none
 /* подсказка о ключе — отдельной строкой над полем ввода и кнопками */
 .keyrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .keyrow .hint { flex-basis: 100%; }
-.keyrow input { flex: 1 1 160px; max-width: 260px; }
+.keyrow input { flex: 1 1 160px; max-width: 260px; background: rgba(0,0,0,.5); border: 1px solid var(--line); padding: 3px 8px; }
+.keyrow input:focus { outline: none; border-color: var(--bone); }
 .keyrow .btn { padding: 2px 12px; }
 .keyrow .warn { margin-left: 0; font-size: 14.5px; }
 .grid > input[type="number"] { max-width: 200px; }

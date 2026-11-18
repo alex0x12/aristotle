@@ -1,4 +1,4 @@
-import { get, send, esc, fmtK, fmtTokens, fmtCost, answerTokens } from './api.js';
+import { get, send, esc, fmtK, fmtTokens, answerTokens } from './api.js';
 import { showDialog } from './dialog.js';
 
 // Экраны библиотеки и настроек подгружаются по требованию. Удавшаяся загрузка
@@ -20,34 +20,40 @@ async function lazy(name, retry) {
 
 export const app = {
   state: null,
-  profile: '',
   convs: [],
   currentId: '',
   lastUsed: 0,
+  // Потолок входа запроса в токенах; 0 — без урезания. Берётся из состояния и
+  // обновляется событием usage (сервер называет в нём бюджет того хода).
+  contextBudget: 0,
   answerLine: '',
   convLine: '',
 
-  budget() {
-    const p = this.state?.profiles?.find(x => x.name === (this.profile || this.state.default));
-    return p?.context_budget ?? 0;
-  },
+  budget() { return this.contextBudget; },
 
   async refreshState() {
     this.state = await get('/api/state');
-    const sel = document.getElementById('profile');
-    sel.innerHTML = (this.state.profiles ?? []).map(p =>
-      `<option value="${esc(p.name)}">${esc(p.name)} · ${esc(p.model)}</option>`).join('');
-    // Профиль, убранный в настройках, больше не выбран: ход с ним был бы отказом.
-    if (!this.state.profiles?.some(p => p.name === this.profile)) this.profile = '';
-    sel.value = this.profile || this.state.default;
-    sel.onchange = () => { this.profile = sel.value; this.onContext(this.lastUsed); };
+    // Бюджет приходит числом, но шапка не должна ломаться, если поля нет или оно
+    // не число: тогда считаем «без урезания», а не показываем NaN.
+    const b = Number(this.state?.context_budget);
+    this.contextBudget = b > 0 ? b : 0;
+    this.paintModel();
+    this.onContext(this.lastUsed); // шкала — по новому бюджету
     this.paintMonth();
     this.paintDegraded();
   },
 
+  // paintModel — имя модели в шапке простым текстом: выбирать там больше нечего,
+  // модель одна, она меняется в настройках.
+  paintModel() {
+    const el = document.getElementById('model');
+    el.textContent = this.state?.model ?? '';
+    el.hidden = !el.textContent;
+  },
+
   // paintDegraded — постоянное предупреждение над центральной панелью, пока
-  // сервер работает без config.json (встроенные профили). Текст — сервера;
-  // textContent, а не разметка.
+  // сервер работает без читаемого config.json (на настройках по умолчанию).
+  // Текст — сервера; textContent, а не разметка.
   paintDegraded() {
     const box = document.getElementById('degraded');
     const on = !!(this.state?.degraded ?? false);
@@ -55,16 +61,15 @@ export const app = {
     box.textContent = on ? (this.state?.warning ?? '') || 'config.json не читается' : '';
   },
 
-  // paintMonth — итог месяца подсказкой к строке расхода в шапке. «≈» — в нём
-  // есть оборванные ответы или ответы без цены, сумма неполная.
+  // paintMonth — итог месяца подсказкой к строке расхода в шапке, в токенах.
+  // «≈» — в нём есть оборванные ответы, сумма неполная.
   paintMonth() {
     const m = this.state?.month;
     const line = document.getElementById('usage-line');
     if (!m?.answers) { line.title = 'за месяц: расхода нет'; return; }
-    const tokens = (m.input ?? 0) + (m.output ?? 0) + (m.cache_read ?? 0) + (m.cache_write ?? 0);
-    const text = tokens || !m.partial ? (m.partial ? '≈' : '') + fmtTokens(tokens) + ' ток.' : '—';
-    const cost = m.cost_usd != null ? ' · ' + (m.partial || m.cost_partial ? '≈' : '') + fmtCost(m.cost_usd) : '';
-    line.title = 'за месяц: ' + text + cost;
+    const tokens = (m.input ?? 0) + (m.output ?? 0) + (m.cache_read ?? 0);
+    const partial = m.partial ?? false;
+    line.title = 'за месяц: ' + (tokens || !partial ? (partial ? '≈' : '') + fmtTokens(tokens) + ' ток.' : '—');
   },
 
   async refreshConvs() {
@@ -93,41 +98,50 @@ export const app = {
     }
   },
 
-  // paintUsage — вторая строка шапки: ответ, беседа, цена.
+  // paintUsage — вторая строка шапки: ответ и беседа, только токены.
   paintUsage() {
     document.getElementById('usage-line').textContent =
       [this.answerLine, this.convLine].filter(Boolean).join(' · ');
   },
 
   // onContext — шкала контекста и итоги беседы в шапке. tokens не передан —
-  // меняется только шкала (например, при смене профиля).
-  onContext(used, tokens, cost) {
+  // меняется только шкала (например, после смены бюджета в настройках).
+  onContext(used, tokens) {
     used ??= 0;
     this.lastUsed = used;
     const budget = this.budget();
     const bar = document.getElementById('ctx-bar');
+    // Бюджет 0 — не «нулевой потолок», а «не урезать»: модели уходит вся беседа.
+    // Деления на ноль нет, шкала не рисуется (у неё нет конца), а подпись говорит
+    // об этом словами.
+    const shown = used ? fmtK(used) : '—';
     document.getElementById('ctx-label').textContent =
-      budget ? `контекст ${used ? fmtK(used) : '—'} / ${fmtK(budget)}` : 'контекст без ограничения';
+      budget ? `контекст ${shown} / ${fmtK(budget)}` : `контекст ${shown} · без урезания`;
+    bar.hidden = !budget;
     bar.querySelector('i').style.width = budget ? Math.min(100, 100 * used / budget) + '%' : '0';
     // Не «over»: так уже зовётся наложение на фриз.
     bar.classList.toggle('exceeded', budget > 0 && used > budget);
     if (tokens !== undefined) {
-      this.convLine = tokens ? `беседа ${fmtTokens(tokens)} ток.` + (cost != null ? ' · ' + fmtCost(cost) : '') : '';
+      this.convLine = tokens ? `беседа ${fmtTokens(tokens)} ток.` : '';
       this.answerLine = '';
       this.paintUsage();
     }
   },
 
+  // onUsage — событие usage потока: {usage, context_used, context_budget,
+  // conversation_tokens}. Бюджет в нём — тот, по которому сервер собрал ход.
   onUsage(d) {
-    this.onContext(d.context_used, d.conversation_tokens, d.conversation_cost_usd);
+    const b = Number(d.context_budget);
+    if (d.context_budget != null && b >= 0) this.contextBudget = b;
+    this.onContext(d.context_used, d.conversation_tokens);
     this.answerLine = answerTokens(d.usage);
     this.paintUsage();
   },
 
-  async onDone() {
+  // onDone — ход закончился: список бесед (порядок, название) обновляется здесь,
+  // итог месяца и состояние ключа — в refreshState, который зовёт диалог.
+  onDone() {
     this.refreshConvs();
-    // Итог месяца вырос; подсказку обновляем, не трогая выбор профиля в шапке.
-    try { this.state.month = (await get('/api/state')).month; this.paintMonth(); } catch { /* шапка подождёт */ }
   },
 };
 
@@ -175,7 +189,7 @@ document.getElementById('new-conv').addEventListener('click', () => {
   if (location.hash === '#/' || !location.hash) route(); else location.hash = '#/';
 });
 window.addEventListener('hashchange', route);
-// Не вышло состояние (профили, шапка) — список бесед и диалог всё равно
+// Не вышло состояние (модель, шапка) — список бесед и диалог всё равно
 // должны открыться: они от него не зависят.
 try {
   await app.refreshState();
@@ -183,7 +197,7 @@ try {
   console.error('состояние не загрузилось', e);
   const box = document.getElementById('degraded');
   box.hidden = false;
-  box.textContent = 'состояние не загрузилось — профили и шапка могут быть неполными';
+  box.textContent = 'состояние не загрузилось — шапка может быть неполной';
 }
 await app.refreshConvs();
 route();

@@ -37,9 +37,9 @@ export function blockEl(b, quotesUnknown = false) {
   return el(`<p class="note"><span class="tag">${NOTE[b.kind] ?? esc(b.kind)}</span> ${esc(b.text)}</p>`);
 }
 
-function metaLine(usage, cost) {
+function metaLine(usage) {
   usage ??= {};
-  const line = el(`<div class="meta-line">${esc(usageText(usage, cost))}</div>`);
+  const line = el(`<div class="meta-line">${esc(usageText(usage))}</div>`);
   if (!usage.known) {
     line.title = usageIsPartial(usage)
       ? 'Сумма завершённых запросов: ответ не дошёл до конца, итог провайдер не сообщил'
@@ -74,6 +74,8 @@ export async function showDialog(center, id, app) {
     <div class="msgs" id="msgs"></div>
     <div class="status" id="status" hidden></div>
     <div class="banner" id="banner" hidden></div>
+    <!-- Подсказка без рамки: ключа нет, и ход всё равно будет отказом (см. syncKeyHint) -->
+    <p class="hint" id="nokey" hidden>Ключ API не задан — откройте <a href="#/settings">«Настройки»</a> или выполните aristotle key</p>
     <form class="input" id="ask">
       <textarea id="q" rows="1" placeholder="Спросить Аристотеля…"></textarea>
       <button class="btn" type="submit" id="send">ΕΡΩΤΑΝ</button>
@@ -86,7 +88,7 @@ export async function showDialog(center, id, app) {
     banner: center.querySelector('#banner'), q: center.querySelector('#q'),
     send: center.querySelector('#send'), stop: center.querySelector('#stop'),
     again: center.querySelector('#again'), title: center.querySelector('#conv-title'),
-    controller: null,
+    nokey: center.querySelector('#nokey'), controller: null,
   };
   let conv;
   try {
@@ -97,7 +99,8 @@ export async function showDialog(center, id, app) {
   }
   conv.items ??= [];
   v.title.textContent = conv.items.length ? (conv.title ?? '').toUpperCase() : 'НОВАЯ БЕСЕДА';
-  app.onContext(conv.context_used, conv.tokens, conv.cost_usd);
+  app.onContext(conv.context_used, conv.tokens);
+  syncKeyHint(v);
   // Слушатели — до отрисовки: если она упадёт на неожиданной записи, форма всё
   // равно должна работать, а не уходить нативным GET с перезагрузкой страницы.
   bindInput(v, center);
@@ -154,7 +157,7 @@ function render(v, conv) {
     for (const b of it.blocks ?? []) { const e = blockEl(b, it.quotes_unknown); if (e) ans.append(e); }
     if (it.stop_reason === 'cancelled') ans.append(el('<p class="stopped">ответ остановлен</p>'));
     if (it.stop_reason === 'error') ans.append(el('<p class="stopped">ответ прерван ошибкой</p>'));
-    if (it.usage) ans.append(metaLine(it.usage, it.cost_usd));
+    if (it.usage) ans.append(metaLine(it.usage));
     (turn ?? v.msgs).append(ans);
   }
   markTrim(v.msgs, trim);
@@ -168,6 +171,16 @@ function busy(v, on) {
 
 // «Ещё раз» нужен, только когда есть последний вопрос.
 function syncAgain(v) { v.again.hidden = !v.msgs.querySelector('.turn'); }
+
+// syncKeyHint — подсказка над полем ввода, пока ключа API нет: любой вопрос был
+// бы отказом сервера. Показывается, только когда сервер сказал это прямо
+// (key.set === false) и без предупреждения об испорченном keys.json: там дело не
+// в отсутствии ключа, а подсказка про «Настройки» увела бы не туда — ответит
+// сам сервер. Не загрузилось состояние — подсказки нет: ничего не известно.
+function syncKeyHint(v) {
+  const key = v.app.state?.key;
+  v.nokey.hidden = !(key?.set === false && !(key.warning ?? ''));
+}
 
 // addBanner — предупреждения и ошибки накапливаются: поздняя не должна
 // затирать раннюю (предупреждение поиска, потом о бюджете).
@@ -241,7 +254,7 @@ async function ask(v, text, again, prev = null) {
     try {
       res = await fetch(url, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(again ? { profile: v.app.profile } : { text, profile: v.app.profile }),
+        body: JSON.stringify(again ? {} : { text }),
         signal: v.controller.signal,
       });
       if (!res.ok) throw new Error((await res.text()).trim() || res.statusText);
@@ -273,7 +286,7 @@ async function ask(v, text, again, prev = null) {
         case 'trim': markTrim(v.msgs, d); break;
         // Расход приходит и без done: при ошибке он идёт перед error.
         case 'usage':
-          ans.append(metaLine(d.usage, d.cost_usd));
+          ans.append(metaLine(d.usage));
           // Шапка принадлежит открытой беседе: ход мог идти, пока человек ушёл в другую.
           if (v.app.currentId === v.id) v.app.onUsage(d);
           break;
@@ -326,6 +339,10 @@ async function ask(v, text, again, prev = null) {
     busy(v, false);
     syncAgain(v);
     if (ended !== 'done') v.app.refreshConvs();
+    // Итог месяца вырос, а ключ могли задать или убрать в другом окне или из
+    // командной строки: состояние перечитывается после любого хода, подсказка
+    // о ключе — по нему. Не вышло — остаётся прежнее, шапка подождёт.
+    v.app.refreshState().then(() => syncKeyHint(v), () => {});
     v.q.focus();
   }
 }

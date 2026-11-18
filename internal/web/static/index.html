@@ -17,7 +17,7 @@
     <div class="over">
       <a class="logo" href="#/">ΑΡΙΣΤΟΤΕΛΗΣ<small>БЕСЕДЫ ПО КОРПУСУ ПОДЛИННЫХ СОЧИНЕНИЙ</small></a>
       <div class="meter">
-        <select id="profile" title="Профиль"></select>
+        <span id="model" class="model" title="Модель; меняется в «Настройках»" hidden></span>
         <span id="ctx-label">контекст —</span><span class="bar" id="ctx-bar"><i></i></span><br>
         <span id="usage-line"></span>
       </div>
@@ -34,7 +34,7 @@
       <div class="side-links"><a href="#/library">БИБЛИОТЕКА</a> · <a href="#/settings">НАСТРОЙКИ</a></div>
     </nav>
     <div class="centercol">
-      <!-- Постоянное предупреждение на любом экране: config.json не читается (main.js) -->
+      <!-- Постоянное предупреждение на любом экране: config.json не читается, сервер на настройках по умолчанию (main.js) -->
       <div class="banner" id="degraded" hidden></div>
       <main class="panel center" id="center"></main>
     </div>
