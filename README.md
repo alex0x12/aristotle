@@ -196,7 +196,8 @@ make web            # или ./aristotle web
 сохраняет ключ API (`key -delete` — удаляет).
 
 Цели `make`: `build`, `run`, `web`, `check`, `test`, `eval`, `eval-recall`,
-`corpus`, `corpus-force`, `index`, `assets`, `clean`. Справка — `make help`.
+`corpus`, `corpus-force`, `index`, `recall`, `assets`, `install-skill`,
+`uninstall-skill`, `clean`. Справка — `make help`.
 `assets` заново скачивает изображения и шрифт веб-интерфейса; результат и
 так лежит в git, так что нужен он только при смене набора.
 
@@ -221,6 +222,7 @@ make web            # или ./aristotle web
   20 с Internet Classics Archive при MIT и 9 с Wikisource. Коммитится
   целиком: клонировал — работает.
 - `build/` — конвейер сборки корпуса.
+- `skills/` — скилл для Claude: как собрать пакет философа.
 - `eval/questions.yaml` — контрольные вопросы для замеров.
 - `docs/superpowers/` — спецификация и план разработки.
 
@@ -242,6 +244,16 @@ recall упал или выдумки перестали быть нулевым
   дальше 2,5–3 с.
 
 Быстрый прогон без трат на API: `make eval-recall`.
+
+## Другие философы
+
+Библиотека задумана на многих философов; код пока знает одного Аристотеля.
+Пакет нового философа собирается заранее в `philosophers/<slug>/` — реестр
+работ, корпус, пять файлов персоны, контрольные вопросы, стиль страницы — по
+скиллу Claude `skills/philosopher-agent/` (`make install-skill` ставит его
+ссылкой в `~/.claude/skills`). Для пакета работают `make corpus`,
+`make index` и `make recall` с `PHILOSOPHER=<slug>`; беседовать с ним можно
+будет, когда библиотека научится открывать пакеты.
 
 ## Чего здесь намеренно нет
 

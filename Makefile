@@ -25,7 +25,7 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: help build run web test test-go test-py check fmt vet eval eval-recall \
-        corpus corpus-force index recall assets clean
+        corpus corpus-force index recall assets install-skill uninstall-skill clean
 
 help: ## Показать эту справку
 	@printf 'Цели:\n'
@@ -97,6 +97,25 @@ recall: ## Recall поиска по вопросам, без модели (PHILO
 
 assets: ## Скачать изображения и шрифты веб-интерфейса (результат уже в git)
 	bash build/web-assets.sh
+
+# --- скилл для Claude --------------------------------------------------------
+# Скилл живёт в репозитории, а Claude ищет его в ~/.claude/skills: ставим
+# ссылку, поэтому правка в репозитории действует сразу.
+
+SKILL_SRC  := $(CURDIR)/skills/philosopher-agent
+SKILL_LINK := $(HOME)/.claude/skills/philosopher-agent
+
+install-skill: ## Поставить скилл «философ → чат-агент» ссылкой в ~/.claude/skills
+	@mkdir -p "$(dir $(SKILL_LINK))"
+	@ln -sfn "$(SKILL_SRC)" "$(SKILL_LINK)"
+	@echo "скилл: $(SKILL_LINK) -> $(SKILL_SRC)"
+
+uninstall-skill: ## Убрать ссылку на скилл (только свою)
+	@if [ "$$(readlink "$(SKILL_LINK)")" = "$(SKILL_SRC)" ]; then \
+	    rm -f "$(SKILL_LINK)" && echo "удалено: $(SKILL_LINK)"; \
+	else \
+	    echo "не наша ссылка или её нет: $(SKILL_LINK)"; \
+	fi
 
 # --- прочее ------------------------------------------------------------------
 
