@@ -327,13 +327,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
-	cfg, _, err := s.loadConfig()
-	if err != nil {
-		// Ошибка называет путь к файлу конфига; читателю он ни к чему.
-		log.Printf("поиск по корпусу: %v", err)
-		http.Error(w, "конфиг не прочитался", http.StatusInternalServerError)
-		return
-	}
+	cfg, _, _ := s.loadConfig() // из конфига нужен только k; испорченный — встроенный
 	ctx, cancel := context.WithTimeout(r.Context(), s.searchDeadline())
 	defer cancel()
 	hits, err := s.finder().Search(ctx, q, group, cfg.CorpusK)

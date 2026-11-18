@@ -568,16 +568,18 @@ func TestSearchClientGoneIsSilent(t *testing.T) {
 	}
 }
 
-// Ошибка чтения конфига называет путь к файлу; в ответ он не идёт — только в журнал.
-func TestSearchBrokenConfigHidesPath(t *testing.T) {
-	s := newTestServer(t, nil, &recFinder{})
+// Испорченный config.json поиск не останавливает: берётся встроенный конфиг
+// (6 глав на поиск), а ни путь к файлу, ни текст разбора в ответ не идут.
+func TestSearchBrokenConfigFallsBackToBuiltin(t *testing.T) {
+	f := &recFinder{}
+	s := newTestServer(t, nil, f)
 	if err := os.WriteFile(s.Paths.Config, []byte("{не json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rec := do(t, s.Handler(), http.MethodGet, "/api/corpus/search?q=habit", "")
 	body := rec.Body.String()
-	if rec.Code != http.StatusInternalServerError || !strings.Contains(body, "конфиг не прочитался") {
-		t.Fatalf("код %d, %q", rec.Code, body)
+	if rec.Code != 200 || len(f.calls) != 1 || f.calls[0] != "habit||6" {
+		t.Fatalf("код %d, %q, вызовы %v", rec.Code, body, f.calls)
 	}
 	if strings.Contains(body, s.Paths.Config) || strings.Contains(body, filepath.Dir(s.Paths.Config)) {
 		t.Fatalf("путь к конфигу в ответе: %q", body)

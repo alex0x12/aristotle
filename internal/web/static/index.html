@@ -33,7 +33,11 @@
       <button class="newc" id="new-conv" type="button">НОВАЯ БЕСЕДА</button>
       <div class="side-links"><a href="#/library">БИБЛИОТЕКА</a> · <a href="#/settings">НАСТРОЙКИ</a></div>
     </nav>
-    <main class="panel center" id="center"></main>
+    <div class="centercol">
+      <!-- Постоянное предупреждение на любом экране: config.json не читается (main.js) -->
+      <div class="banner" id="degraded" hidden></div>
+      <main class="panel center" id="center"></main>
+    </div>
     <aside class="panel src" id="src" hidden>
       <div class="vase" aria-hidden="true"></div>
       <div class="in" id="src-in"></div>

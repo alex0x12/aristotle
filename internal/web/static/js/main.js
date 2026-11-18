@@ -42,6 +42,17 @@ export const app = {
     sel.value = this.profile || this.state.default;
     sel.onchange = () => { this.profile = sel.value; this.onContext(this.lastUsed); };
     this.paintMonth();
+    this.paintDegraded();
+  },
+
+  // paintDegraded — постоянное предупреждение над центральной панелью, пока
+  // сервер работает без config.json (встроенные профили). Текст — сервера;
+  // textContent, а не разметка.
+  paintDegraded() {
+    const box = document.getElementById('degraded');
+    const on = !!(this.state?.degraded ?? false);
+    box.hidden = !on;
+    box.textContent = on ? (this.state?.warning ?? '') || 'config.json не читается' : '';
   },
 
   // paintMonth — итог месяца подсказкой к строке расхода в шапке. «≈» — в нём
@@ -164,6 +175,15 @@ document.getElementById('new-conv').addEventListener('click', () => {
   if (location.hash === '#/' || !location.hash) route(); else location.hash = '#/';
 });
 window.addEventListener('hashchange', route);
-await app.refreshState();
+// Не вышло состояние (профили, шапка) — список бесед и диалог всё равно
+// должны открыться: они от него не зависят.
+try {
+  await app.refreshState();
+} catch (e) {
+  console.error('состояние не загрузилось', e);
+  const box = document.getElementById('degraded');
+  box.hidden = false;
+  box.textContent = 'состояние не загрузилось — профили и шапка могут быть неполными';
+}
 await app.refreshConvs();
 route();

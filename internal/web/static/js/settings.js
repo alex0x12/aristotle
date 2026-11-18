@@ -139,8 +139,11 @@ async function save(box, app, render) {
   // здесь, а не на каждую набранную букву: имя набирается по знаку, и «tmp» на
   // пути к «tmpx» не должно вычеркнуть убранный «tmp».
   draft.removed = draft.removed.filter(n => !draft.profiles.some(p => p.name === n));
+  let backup = '';
   try {
-    load(await send('PUT', '/api/settings', draft));
+    const saved = await send('PUT', '/api/settings', draft);
+    backup = saved?.backup ?? ''; // имя копии испорченного config.json, если она делалась
+    load(saved);
   } catch (e) {
     box.querySelector('#err').hidden = false;
     box.querySelector('#err').textContent = reason(e);
@@ -148,6 +151,11 @@ async function save(box, app, render) {
   }
   redraw(box, render);
   status(box, 'сохранено');
+  if (backup) { // один раз: перерисовка вкладки уберёт строку
+    const note = box.querySelector('#backup');
+    note.textContent = `копия повреждённого файла сохранена рядом: ${backup}`;
+    note.hidden = false;
+  }
   try {
     await app.refreshState(); // выбор профиля в шапке и бюджет контекста — по новым настройкам
     app.onContext(app.lastUsed);
@@ -155,7 +163,8 @@ async function save(box, app, render) {
 }
 
 const saveBar = () => `<div class="banner" id="err" hidden></div>
-  <div class="row"><button class="btn" id="save" type="button">СОХРАНИТЬ НАСТРОЙКИ</button><span class="hint" id="status"></span></div>`;
+  <div class="row"><button class="btn" id="save" type="button">СОХРАНИТЬ НАСТРОЙКИ</button><span class="hint" id="status"></span></div>
+  <p class="hint" id="backup" hidden></p>`;
 
 function touched(box) {
   if (!dirty) { dirty = true; status(box, 'есть несохранённые изменения'); }

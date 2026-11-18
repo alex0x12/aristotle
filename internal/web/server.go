@@ -49,11 +49,22 @@ type Server struct {
 	searchTimeout time.Duration
 	// Предел проверки ключа; ноль — defaultKeyCheckTimeout.
 	keyCheckTimeout time.Duration
+	// Часы для имени копии испорченного config.json; nil — time.Now.
+	clock func() time.Time
 
 	// keysMu стоит над каждой записью keys.json (замена, удаление, чистка после
 	// убранного профиля): keys.Store замка не имеет, а запись — это чтение всего
 	// файла и замена целиком.
 	keysMu sync.Mutex
+
+	// cfgMu держит сохранение настроек целиком: проверка, копия испорченного
+	// файла и запись. Два сохранения подряд не должны оба увидеть повреждённый
+	// файл и сделать две копии одного имени.
+	cfgMu sync.Mutex
+	// lastCfgErr — последняя записанная в журнал ошибка config.json: страница
+	// спрашивает состояние часто, и одна и та же строка повторялась бы каждый раз.
+	cfgLogMu   sync.Mutex
+	lastCfgErr string
 
 	mu    sync.Mutex
 	convs map[string]*conv
@@ -170,11 +181,39 @@ func readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v)
 }
 
+// configUnreadableText — предупреждение интерфейсу, когда config.json не
+// читается. Ни пути, ни текста разбора в нём нет.
+const configUnreadableText = "config.json не читается — исправьте файл или сохраните настройки заново (будет перезаписан)"
+
 // loadConfig читает конфиг с диска на каждый запрос: файл маленький, а
-// правка из настроек видна сразу, без перезапуска.
-func (s *Server) loadConfig() (config.Config, keys.Store, error) {
+// правка из настроек видна сразу, без перезапуска. Ошибки не возвращает:
+// если config.json не читается (его правят руками), берётся встроенный конфиг и
+// degraded = true — интерфейс с беседами и диалогом остаётся рабочим, ключи
+// окружения действуют как прежде, а экран настроек показывает встроенные
+// профили и предупреждение. Причина (с путём) идёт в журнал сервера, один раз
+// на каждую новую ошибку; в ответы она не попадает.
+func (s *Server) loadConfig() (cfg config.Config, store keys.Store, degraded bool) {
+	store = keys.Store{Path: s.Paths.Keys}
 	cfg, err := config.Load(s.Paths.Config)
-	return cfg, keys.Store{Path: s.Paths.Keys}, err
+	s.cfgLogMu.Lock()
+	defer s.cfgLogMu.Unlock()
+	if err == nil {
+		s.lastCfgErr = ""
+		return cfg, store, false
+	}
+	if msg := err.Error(); msg != s.lastCfgErr {
+		s.lastCfgErr = msg
+		log.Printf("%v (работаем со встроенными профилями)", err)
+	}
+	return config.Builtin(), store, true
+}
+
+// utcNow — текущее время; в тестах подменяется Server.clock.
+func (s *Server) utcNow() time.Time {
+	if s.clock != nil {
+		return s.clock().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (s *Server) httpClient() *http.Client {

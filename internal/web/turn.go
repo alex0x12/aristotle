@@ -138,11 +138,7 @@ func (s *Server) handleAgain(w http.ResponseWriter, r *http.Request) {
 // runTurn ведёт один ход потоком событий. retract (может быть nil) вызывается
 // после всех проверок, перед первой записью в журнал.
 func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, profileName string, retract func() error) {
-	cfg, store, err := s.loadConfig()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	cfg, store, _ := s.loadConfig() // испорченный config.json — встроенные профили, ключи окружения действуют
 	// s.resolve, а не app.Resolve: ошибка чтения keys.json в app несёт путь к
 	// файлу и знак из него, а в диалог идёт фиксированный текст.
 	prof, err := s.resolve(cfg, store, profileName)

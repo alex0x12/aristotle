@@ -32,6 +32,12 @@ type settingsDoc struct {
 	// правки. Ключ из keys.json удаляется только у них (и только если профиля
 	// нет в новых настройках); по одному отсутствию в документе — никогда.
 	Removed []string `json:"removed,omitempty"`
+	// Degraded, Warning и Backup — только в ответе (в PUT принимаются и не
+	// читаются): config.json не читался, и вместо него взят встроенный
+	// конфиг; предупреждение для экрана; имя копии испорченного файла.
+	Degraded bool   `json:"degraded,omitempty"`
+	Warning  string `json:"warning,omitempty"`
+	Backup   string `json:"backup,omitempty"`
 }
 
 // Пределы значений. Верхние нужны не как мнение о «разумном», а чтобы
@@ -208,13 +214,19 @@ func decodeStrict(r *http.Request, v any) error {
 	return nil
 }
 
-func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	cfg, views, err := s.profiles()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+// currentSettings — настройки как их видит экран; при испорченном config.json —
+// встроенные с пометкой degraded и предупреждением.
+func (s *Server) currentSettings() settingsDoc {
+	cfg, views, degraded := s.profiles()
+	doc := settingsDoc{Default: cfg.Default, CorpusK: cfg.CorpusK, Profiles: views}
+	if degraded {
+		doc.Degraded, doc.Warning = true, configUnreadableText
 	}
-	writeJSON(w, settingsDoc{Default: cfg.Default, CorpusK: cfg.CorpusK, Profiles: views})
+	return doc
+}
+
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.currentSettings())
 }
 
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
@@ -228,15 +240,31 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Испорченный config.json не затирается молча: его правили руками.
-	old, store, err := s.loadConfig()
-	if err != nil {
-		http.Error(w, "config.json не читается, настройки не сохранены: "+err.Error(), http.StatusConflict)
-		return
-	}
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	old, store, degraded := s.loadConfig()
 	if err := checkRemoved(in.Removed, old); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	// Порядок: проверка документа (выше), копия, запись. Сохранение поверх
+	// испорченного config.json разрешено — предупреждение обещает именно это, — но
+	// файл правили руками, и молча он не уничтожается: сперва копия рядом. Нет
+	// копии — нет записи.
+	backup := ""
+	if degraded {
+		var err error
+		if backup, err = backupCorruptConfig(s.Paths.Config, s.utcNow()); err != nil {
+			log.Printf("копия повреждённого config.json не сделана: %v", err)
+			if errors.Is(err, errBackupExists) {
+				http.Error(w, "копия повреждённого config.json с таким именем уже есть — повторите через секунду; настройки не записаны, файл не тронут",
+					http.StatusConflict)
+				return
+			}
+			http.Error(w, "не удалось сделать копию повреждённого config.json рядом с ним — настройки не записаны, файл не тронут",
+				http.StatusInternalServerError)
+			return
+		}
 	}
 	if err := config.Save(s.Paths.Config, cfg); err != nil {
 		log.Printf("настройки не записаны: %v", err)
@@ -244,7 +272,9 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.dropKeys(store, in.Removed, cfg)
-	s.handleGetSettings(w, r)
+	doc := s.currentSettings()
+	doc.Backup = backup
+	writeJSON(w, doc)
 }
 
 // checkRemoved проверяет список убранных профилей до всякой записи: имя должно
@@ -294,11 +324,7 @@ func (s *Server) dropKeys(store keys.Store, removed []string, cur config.Config)
 // keyTarget — профиль из пути, только существующий, и хранилище ключей.
 func (s *Server) keyTarget(w http.ResponseWriter, r *http.Request) (config.Config, keys.Store, string, bool) {
 	name := r.PathValue("profile")
-	cfg, store, err := s.loadConfig()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return cfg, store, "", false
-	}
+	cfg, store, _ := s.loadConfig() // испорченный конфиг — встроенные профили
 	if _, ok := cfg.Profiles[name]; !ok {
 		http.Error(w, "нет такого профиля", http.StatusNotFound)
 		return cfg, store, "", false

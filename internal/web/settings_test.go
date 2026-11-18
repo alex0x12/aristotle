@@ -723,23 +723,6 @@ func TestCorruptKeysFileIsNeverOverwritten(t *testing.T) {
 	}
 }
 
-// config.json правят руками: опечатка в нём не должна быть затёрта сохранением
-// настроек, как не затирается испорченный keys.json.
-func TestPutSettingsRefusesToOverwriteCorruptConfig(t *testing.T) {
-	s := newTestServer(t, nil, nil)
-	h := s.Handler()
-	doc := getSettings(t, h)
-	const broken = `{"default": "deepseek", "profiles": {`
-	writeConfig(t, s, broken)
-	rec := putSettings(t, h, doc)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "config.json не читается") {
-		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
-	}
-	if data, _ := os.ReadFile(s.Paths.Config); string(data) != broken {
-		t.Fatalf("испорченный config.json перезаписан: %q", data)
-	}
-}
-
 // Профиль с неверным типом в config.json не обрушивает состояние: экран
 // настроек должен открыться, чтобы тип можно было исправить.
 func TestBadKindInConfigDoesNotBreakState(t *testing.T) {

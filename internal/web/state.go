@@ -100,13 +100,10 @@ func (s *Server) resolve(cfg config.Config, store keys.Store, name string) (conf
 // profiles — все профили с ключами из keys.json, по имени. Испорченный
 // keys.json не роняет ответ: экран настроек, где его чинят, должен открыться.
 // Профили, чей ключ в окружении, показываются как обычно (файл им не нужен), а
-// остальные — без ключа и с предупреждением.
-func (s *Server) profiles() (config.Config, []profileView, error) {
-	cfg, store, err := s.loadConfig()
-	if err != nil {
-		return cfg, nil, err
-	}
-	var views []profileView
+// остальные — без ключа и с предупреждением. Так же не роняет ответ и испорченный
+// config.json: тогда профили встроенные, а degraded = true (см. loadConfig).
+func (s *Server) profiles() (cfg config.Config, views []profileView, degraded bool) {
+	cfg, store, degraded := s.loadConfig()
 	logged := false
 	for _, name := range app.ProfileNames(cfg) {
 		p, err := s.resolve(cfg, store, name)
@@ -120,15 +117,11 @@ func (s *Server) profiles() (config.Config, []profileView, error) {
 		}
 		views = append(views, v)
 	}
-	return cfg, views, nil
+	return cfg, views, degraded
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	cfg, views, err := s.profiles()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	cfg, views, degraded := s.profiles()
 	// Итог месяца для шапки. Журналы, которые не прочитались, итог не
 	// ломают: шапка не должна терять профили из-за расхода.
 	from, to := monthBounds(time.Now())
@@ -136,7 +129,9 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("расход за месяц: %v", err)
 	}
-	writeJSON(w, map[string]any{
-		"default": cfg.Default, "corpus_k": cfg.CorpusK, "profiles": views, "month": month,
-	})
+	out := map[string]any{"default": cfg.Default, "corpus_k": cfg.CorpusK, "profiles": views, "month": month}
+	if degraded { // у здорового конфига этих полей нет вовсе
+		out["degraded"], out["warning"] = true, configUnreadableText
+	}
+	writeJSON(w, out)
 }
