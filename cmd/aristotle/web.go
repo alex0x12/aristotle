@@ -70,10 +70,17 @@ func runWeb(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	// Сигнал отменяет базовый контекст всех запросов раньше, чем начнётся
+	// Shutdown: идущий ход видит отмену, дописывает в журнал начало ответа
+	// (stop_reason cancelled) и возвращается. Shutdown не отменяет контексты
+	// сам — он ждал бы, пока поток ответа не кончится, и упёрся бы в пять секунд.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	srv := &http.Server{
 		Handler: web.New(*root, paths, port).Handler(),
 		// Без WriteTimeout: ответ философа идёт потоком минутами.
 		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 	url := "http://" + *addr + "/"
 	fmt.Println("Аристотель:", url, "— Ctrl-C, чтобы остановить")
@@ -81,8 +88,6 @@ func runWeb(args []string) int {
 		openBrowser(url)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	select {
