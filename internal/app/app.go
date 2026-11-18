@@ -140,50 +140,105 @@ func ProfileNames(cfg config.Config) []string {
 	return names
 }
 
-// ResumeMessages превращает записи истории в сообщения провайдера. Роли,
-// которых чат не понимает (не "user" и не "assistant" — например, битая
-// запись с пустой ролью), пропускаются, а не роняют восстановление целиком.
-// Запись ассистента с пустым текстом тоже пропускается: это след оборванного
-// хода (ошибка провайдера, Ctrl-C посреди ответа), а не настоящая реплика —
-// сообщение без содержимого провайдер не примет.
+// AnswerKept — входит ли ответ из журнала в историю модели. chat.Turn
+// откатывает неудавшийся или остановленный ход целиком (вопрос, начало ответа,
+// обращения к поиску), а пустой ответ провайдер не принял бы сообщением. Такой
+// ход остаётся в журнале и на экране, но не в истории для модели — ни в живой
+// сессии, ни после восстановления из журнала. Записи без stop_reason (журналы
+// командной строки) с текстом остаются: командная строка ошибочных ходов не пишет.
+func AnswerKept(rec chat.Record) bool {
+	return rec.Text != "" && rec.StopReason != "error" && rec.StopReason != "cancelled"
+}
+
+// Состояние хода журнала при восстановлении: вопрос ждёт ответа, пара стоит
+// в истории, ход откатан и в истории его нет.
+type turnState int
+
+const (
+	turnOpen turnState = iota
+	turnKept
+	turnGone
+)
+
+// replay проходит журнал так, как проживала его живая сессия: откатанные ходы
+// не оставляют следа, а retract снимает последний ход журнала — и только если
+// тот ход стоит в истории. Иначе отзыв после сбоя снял бы предыдущий, удавшийся
+// ход. Второй результат — состояния ходов журнала, по одному на каждый вопрос
+// (за вычетом отозванных), как их считает items.
+func replay(records []chat.Record) ([]provider.Message, []turnState) {
+	msgs := make([]provider.Message, 0, len(records))
+	var turns []turnState
+	for _, rec := range records {
+		switch rec.Role {
+		case "user":
+			// Вопрос без ответа посреди журнала (процесс убит на ходу) в
+			// истории не остаётся: иначе рядом встанут два user подряд.
+			if n := len(turns); n > 0 && turns[n-1] == turnOpen {
+				msgs = msgs[:len(msgs)-1]
+				turns[n-1] = turnGone
+			}
+			msgs = append(msgs, provider.Message{Role: provider.RoleUser, Text: rec.Text})
+			turns = append(turns, turnOpen)
+		case "assistant":
+			n := len(turns)
+			if n == 0 || turns[n-1] != turnOpen {
+				continue // ответ без вопроса: потерянная или битая запись
+			}
+			if !AnswerKept(rec) {
+				msgs = msgs[:len(msgs)-1]
+				turns[n-1] = turnGone
+				continue
+			}
+			msgs = append(msgs, provider.Message{Role: provider.RoleAssistant, Text: rec.Text})
+			turns[n-1] = turnKept
+		case chat.RoleRetract:
+			// «Ещё раз»: последний вопрос журнала и ответ на него отозваны.
+			n := len(turns)
+			if n == 0 {
+				continue
+			}
+			switch turns[n-1] {
+			case turnOpen:
+				msgs = msgs[:len(msgs)-1]
+			case turnKept:
+				msgs = msgs[:len(msgs)-2]
+			}
+			turns = turns[:n-1]
+		}
+		// Остальные роли (meta, trim, битые) историю не меняют.
+	}
+	return msgs, turns
+}
+
+// ResumeMessages превращает записи истории в сообщения провайдера — ровно те,
+// что были бы в живой сессии перед перезапуском: сообщения чередуются user и
+// assistant. Роли, которых чат не понимает (не "user" и не "assistant" —
+// например, битая запись с пустой ролью), пропускаются, а не роняют
+// восстановление целиком. Ход, чей ответ не входит в историю (см. AnswerKept),
+// выпадает целиком, вместе с вопросом: сообщение без содержимого провайдер не
+// примет, а оставшийся без ответа вопрос дал бы два user подряд.
 //
 // История обрывается репликой пользователя после ЛЮБОЙ ошибки провайдера
 // или Ctrl-C — то есть как раз в главном случае, ради которого возобновляют:
-// вопрос записан, ответ — нет. Хвостовые записи с ролью user, оставшиеся без
-// ответа ассистента, поэтому отбрасываются: иначе следующий ход дописывает
-// вторую подряд реплику user, а API такое отвергает.
+// вопрос записан, ответ — нет. Хвостовой вопрос без ответа поэтому
+// отбрасывается: иначе следующий ход дописывает вторую подряд реплику user,
+// а API такое отвергает.
 //
 // Запись retract отзывает последний вопрос с ответом — так журнал помнит «ещё раз».
 func ResumeMessages(records []chat.Record) []provider.Message {
-	msgs := make([]provider.Message, 0, len(records))
-	for _, rec := range records {
-		var role provider.Role
-		switch rec.Role {
-		case "user":
-			role = provider.RoleUser
-		case "assistant":
-			if rec.Text == "" {
-				continue
-			}
-			role = provider.RoleAssistant
-		case chat.RoleRetract:
-			// «Ещё раз»: последний вопрос и ответ на него отозваны.
-			if n := len(msgs); n > 0 && msgs[n-1].Role == provider.RoleAssistant {
-				msgs = msgs[:n-1]
-			}
-			if n := len(msgs); n > 0 && msgs[n-1].Role == provider.RoleUser {
-				msgs = msgs[:n-1]
-			}
-			continue
-		default:
-			continue
-		}
-		msgs = append(msgs, provider.Message{Role: role, Text: rec.Text})
-	}
-	for len(msgs) > 0 && msgs[len(msgs)-1].Role == provider.RoleUser {
+	msgs, turns := replay(records)
+	if n := len(turns); n > 0 && turns[n-1] == turnOpen {
 		msgs = msgs[:len(msgs)-1]
 	}
 	return msgs
+}
+
+// LastTurnKept — стоит ли последний ход журнала в истории модели. По этому
+// ответу «ещё раз» решает, снимать ли ход из живой сессии: откатанного хода в
+// ней нет, и снять предыдущий вместо него нельзя.
+func LastTurnKept(records []chat.Record) bool {
+	_, turns := replay(records)
+	return len(turns) > 0 && turns[len(turns)-1] == turnKept
 }
 
 // LastUserMessage ищет последнюю реплику пользователя в истории сессии —

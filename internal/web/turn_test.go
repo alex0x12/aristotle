@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/alex0x12/aristotle/internal/chat"
+	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
@@ -176,8 +179,8 @@ func TestCancelledTurnKeepsPartialAnswer(t *testing.T) {
 	if last.Role != "assistant" || last.Text != "Начало ответа" || last.StopReason != "cancelled" {
 		t.Fatalf("последняя запись %+v", last)
 	}
-	if n := len(s.conv(convID).session.Messages); n != 2 {
-		t.Fatalf("в сессии %d сообщений, ожидалось 2 (вопрос и начало ответа)", n)
+	if n := len(s.conv(convID).session.Messages); n != 0 {
+		t.Fatalf("в сессии %d сообщений, ожидалось 0: остановленный ход откатан целиком, как после перезапуска", n)
 	}
 }
 
@@ -367,29 +370,6 @@ func TestAgainOnSessionRestoredFromJournal(t *testing.T) {
 	}
 }
 
-func TestLastTurnInSession(t *testing.T) {
-	cases := []struct {
-		name string
-		recs []chat.Record
-		want bool
-	}{
-		{"нет записей", nil, false},
-		{"ход закончился", []chat.Record{{Role: "user"}, {Role: "assistant", Text: "а", StopReason: "end"}}, true},
-		{"закончился пустым текстом", []chat.Record{{Role: "user"}, {Role: "assistant", StopReason: "end"}}, true},
-		{"ошибка", []chat.Record{{Role: "user"}, {Role: "assistant", Text: "начало", StopReason: "error"}}, false},
-		{"отмена с началом ответа", []chat.Record{{Role: "user"}, {Role: "assistant", Text: "начало", StopReason: "cancelled"}}, true},
-		{"отмена до первого слова", []chat.Record{{Role: "user"}, {Role: "assistant", StopReason: "cancelled"}}, false},
-		{"запись командной строки", []chat.Record{{Role: "user"}, {Role: "assistant", Text: "а"}}, true},
-		{"ответа нет", []chat.Record{{Role: "assistant", Text: "а", StopReason: "end"}, {Role: "user"}}, false},
-		{"служебные записи в хвосте", []chat.Record{{Role: "user"}, {Role: "assistant", Text: "а", StopReason: "end"}, {Role: chat.RoleMeta, Title: "т"}}, true},
-	}
-	for _, c := range cases {
-		if got := lastTurnInSession(c.recs); got != c.want {
-			t.Errorf("%s: %v, ожидалось %v", c.name, got, c.want)
-		}
-	}
-}
-
 func TestRequestsDuringRunningTurn(t *testing.T) {
 	// Пока идёт ход, беседу можно читать и переименовывать, а второй ход и
 	// удаление получают 409. Тест под -race: журнал дописывается из двух
@@ -444,5 +424,166 @@ func TestRequestsDuringRunningTurn(t *testing.T) {
 	}
 	if len(recs) != 3 || !got["user"] || !got[chat.RoleMeta] || !got["assistant"] {
 		t.Fatalf("журнал %+v: ожидались вопрос, переименование и остановленный ответ", recs)
+	}
+}
+
+// planProvider отвечает на запросы по заранее заданному плану исходов: ok,
+// empty (ответ без текста), fail (отказ провайдера), cancel-empty и
+// cancel-partial (клиент уходит до первого слова и после начала ответа).
+// Остановку делает сам провайдер, вызывая cancel, — без пауз и гонок.
+type planProvider struct {
+	plan   []string
+	n      int
+	cancel context.CancelFunc // отмена запроса, который обслуживается сейчас
+}
+
+func (p *planProvider) Stream(ctx context.Context, _ provider.Request) (provider.Stream, error) {
+	outcome := p.plan[p.n]
+	p.n++
+	switch outcome {
+	case "ok":
+		return &scriptedStream{events: okTurn(fmt.Sprintf("ответ %d\n", p.n))}, nil
+	case "empty":
+		return &scriptedStream{events: []provider.Event{{Kind: provider.EventDone, StopReason: "end_turn"}}}, nil
+	case "fail":
+		return nil, errors.New("сбой провайдера")
+	case "cancel-empty":
+		return &cancelStream{ctx: ctx, cancel: p.cancel}, nil
+	case "cancel-partial":
+		return &cancelStream{ctx: ctx, cancel: p.cancel, partial: "начало ответа"}, nil
+	}
+	return nil, fmt.Errorf("неизвестный исход %q", outcome)
+}
+
+type cancelStream struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	partial string
+	sent    bool
+	cur     provider.Event
+}
+
+func (s *cancelStream) Next() bool {
+	if s.partial != "" && !s.sent {
+		s.sent = true
+		s.cur = provider.Event{Kind: provider.EventText, Text: s.partial}
+		return true
+	}
+	s.cancel()
+	return false
+}
+func (s *cancelStream) Event() provider.Event { return s.cur }
+func (s *cancelStream) Err() error            { return s.ctx.Err() }
+func (s *cancelStream) Close() error          { return nil }
+
+type turnStep struct {
+	again   bool
+	outcome string
+}
+
+func flatMessages(msgs []provider.Message) string {
+	parts := make([]string, len(msgs))
+	for i, m := range msgs {
+		parts[i] = string(m.Role) + ":" + strings.TrimSpace(m.Text)
+	}
+	return strings.Join(parts, " | ")
+}
+
+// alternates — сообщения чередуются user, assistant и начинаются с user.
+func alternates(msgs []provider.Message) bool {
+	for i, m := range msgs {
+		want := provider.RoleUser
+		if i%2 == 1 {
+			want = provider.RoleAssistant
+		}
+		if m.Role != want {
+			return false
+		}
+	}
+	return true
+}
+
+// TestRestartRestoresTheLiveSession: что бы ни случилось в беседе — ошибка,
+// остановка до слова или посреди ответа, пустой ответ, «ещё раз» после любого
+// из них, — сессия, собранная из журнала новым сервером, обязана совпасть с
+// живой перед перезапуском. Иначе после перезапуска модель видит другую
+// беседу, а лишний вопрос подряд часть провайдеров отвергает.
+func TestRestartRestoresTheLiveSession(t *testing.T) {
+	ok, again := "ok", true
+	sequences := map[string][]turnStep{
+		"ok, остановка до слова, ok":                 {{false, ok}, {false, "cancel-empty"}, {false, ok}},
+		"ok, ошибка, ещё раз":                        {{false, ok}, {false, "fail"}, {again, ok}},
+		"ok, остановка с текстом, ещё раз, ok":       {{false, ok}, {false, "cancel-partial"}, {again, ok}, {false, ok}},
+		"ещё раз сразу после ok":                     {{false, ok}, {again, ok}},
+		"первый ход остановлен, потом ok":            {{false, "cancel-empty"}, {false, ok}},
+		"ошибка, остановка с текстом, ok":            {{false, "fail"}, {false, "cancel-partial"}, {false, ok}},
+		"ok, пустой ответ, ok":                       {{false, ok}, {false, "empty"}, {false, ok}},
+		"ok, ok, ещё раз остановлен, ещё раз":        {{false, ok}, {false, ok}, {again, "cancel-empty"}, {again, ok}},
+		"ok, ещё раз с ошибкой, новый вопрос":        {{false, ok}, {again, "fail"}, {false, ok}},
+		"ещё раз два раза подряд":                    {{false, ok}, {again, ok}, {again, ok}},
+		"ошибка, ещё раз с остановкой, ещё раз":      {{false, ok}, {false, "fail"}, {again, "cancel-partial"}, {again, ok}},
+		"пустой ответ, ещё раз":                      {{false, ok}, {false, "empty"}, {again, ok}},
+		"ok, ещё раз с остановкой с текстом, ok, ok": {{false, ok}, {again, "cancel-partial"}, {false, ok}, {false, ok}},
+	}
+	for name, steps := range sequences {
+		t.Run(name, func(t *testing.T) {
+			plan := make([]string, len(steps))
+			for i, st := range steps {
+				plan[i] = st.outcome
+			}
+			p := &planProvider{plan: plan}
+			s := newTestServer(t, p, fakeFinder{})
+			h := s.Handler()
+			for i, st := range steps {
+				ctx, cancel := context.WithCancel(context.Background())
+				p.cancel = cancel
+				path, body := "/turns", fmt.Sprintf(`{"text":"вопрос %d"}`, i+1)
+				if st.again {
+					path, body = "/again", `{}`
+				}
+				req := httptest.NewRequest(http.MethodPost, "/api/conversations/"+convID+path,
+					strings.NewReader(body)).WithContext(ctx)
+				req.Host = "127.0.0.1:8337"
+				req.Header.Set("Origin", "http://127.0.0.1:8337")
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, req)
+				cancel()
+				if rec.Code != 200 {
+					t.Fatalf("шаг %d (%s): код %d: %s", i+1, path, rec.Code, rec.Body.String())
+				}
+			}
+			live := s.conv(convID).session.Messages
+
+			// Каждый шаг дошёл до своего исхода, а не до какого-то соседнего.
+			reasons := map[string]string{"ok": "end", "empty": "end", "fail": "error",
+				"cancel-empty": "cancelled", "cancel-partial": "cancelled"}
+			var wantReasons, gotReasons []string
+			for _, st := range steps {
+				wantReasons = append(wantReasons, reasons[st.outcome])
+			}
+			recs, _ := s.conv(convID).history.Load()
+			for _, r := range recs {
+				if r.Role == "assistant" {
+					gotReasons = append(gotReasons, r.StopReason)
+				}
+			}
+			if strings.Join(gotReasons, " ") != strings.Join(wantReasons, " ") {
+				t.Fatalf("причины остановки в журнале %v, ожидались %v", gotReasons, wantReasons)
+			}
+
+			// Перезапуск: новый сервер на тех же каталогах, сессия — из журнала.
+			s2 := New(s.Root, s.Paths, 8337)
+			s2.System, s2.NewProvider, s2.Finder = s.System, s.NewProvider, s.Finder
+			sess, err := s2.session(s2.conv(convID), config.Profile{}, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := flatMessages(sess.Messages), flatMessages(live); got != want {
+				t.Fatalf("после перезапуска:\n  %s\nживая сессия:\n  %s", got, want)
+			}
+			if !alternates(live) || !alternates(sess.Messages) {
+				t.Fatalf("роли не чередуются: живая %s, восстановленная %s", flatMessages(live), flatMessages(sess.Messages))
+			}
+		})
 	}
 }

@@ -76,8 +76,9 @@ func TestResumeMessagesDropsAllLeadingIfNeverAnswered(t *testing.T) {
 }
 
 // TestResumeMessagesSkipsEmptyAssistantText: запись ассистента с пустым
-// текстом (тот же оборванный ход) не должна попадать в историю как
-// сообщение без содержимого — она пропускается, как и битая роль.
+// текстом — оборванный ход. Сообщение без содержимого провайдер не примет, а
+// оставшийся без ответа вопрос дал бы два user подряд, поэтому ход выпадает
+// целиком: вопрос тоже. Так же Turn откатывает ход в живой сессии.
 func TestResumeMessagesSkipsEmptyAssistantText(t *testing.T) {
 	records := []chat.Record{
 		{Role: "user", Text: "что такое счастье"},
@@ -86,10 +87,10 @@ func TestResumeMessagesSkipsEmptyAssistantText(t *testing.T) {
 		{Role: "assistant", Text: "деятельность души"},
 	}
 	got := ResumeMessages(records)
-	if len(got) != 3 {
-		t.Fatalf("ResumeMessages = %+v, ожидалось 3 сообщения (пустой ответ пропущен)", got)
+	if len(got) != 2 {
+		t.Fatalf("ResumeMessages = %+v, ожидалось 2 сообщения (оборванный ход выпал целиком)", got)
 	}
-	if got[0].Text != "что такое счастье" || got[1].Text != "повтори" || got[2].Text != "деятельность души" {
+	if got[0].Text != "повтори" || got[1].Text != "деятельность души" {
 		t.Fatalf("ResumeMessages = %+v", got)
 	}
 }
@@ -398,5 +399,155 @@ func TestQuotesOfKeepsOnlyQuotes(t *testing.T) {
 	}
 	if QuotesOf(nil) != nil {
 		t.Fatal("без врезок результат пуст")
+	}
+}
+
+// flat — сообщения одной строкой «роль:текст», чтобы сравнивать историю целиком.
+func flat(msgs []provider.Message) string {
+	out := ""
+	for i, m := range msgs {
+		if i > 0 {
+			out += " | "
+		}
+		out += string(m.Role) + ":" + m.Text
+	}
+	return out
+}
+
+// Живая сессия откатывает неудавшийся и остановленный ход целиком (chat.Turn),
+// поэтому после перезапуска такой ход не должен возвращаться — иначе рядом
+// окажутся два вопроса подряд, а часть провайдеров такое отвергает.
+func TestResumeMessagesRollsBackFailedAndStoppedTurns(t *testing.T) {
+	cases := []struct {
+		name string
+		stop chat.Record // запись ответа на второй вопрос
+	}{
+		{"остановлен до первого слова", chat.Record{Role: "assistant", StopReason: "cancelled"}},
+		{"остановлен с началом ответа", chat.Record{Role: "assistant", Text: "начало ответа", StopReason: "cancelled"}},
+		{"ошибка без текста", chat.Record{Role: "assistant", StopReason: "error"}},
+		{"ошибка с началом ответа", chat.Record{Role: "assistant", Text: "начало ответа", StopReason: "error"}},
+	}
+	for _, c := range cases {
+		records := []chat.Record{
+			{Role: "user", Text: "q1"},
+			{Role: "assistant", Text: "a1", StopReason: "end"},
+			{Role: "user", Text: "q2"},
+			c.stop,
+			{Role: "user", Text: "q3"},
+			{Role: "assistant", Text: "a3", StopReason: "end"},
+		}
+		got := flat(ResumeMessages(records))
+		want := "user:q1 | assistant:a1 | user:q3 | assistant:a3"
+		if got != want {
+			t.Errorf("%s: %s, ожидалось %s", c.name, got, want)
+		}
+	}
+}
+
+// retract отзывает последний вопрос журнала. Если этот ход откатан, в истории
+// модели его нет, и отзыв не должен снять предыдущий, удавшийся ход.
+func TestResumeMessagesRetractAfterRolledBackTurnKeepsEarlierTurn(t *testing.T) {
+	cases := []struct {
+		name string
+		stop chat.Record
+	}{
+		{"после ошибки", chat.Record{Role: "assistant", StopReason: "error"}},
+		{"после остановки с текстом", chat.Record{Role: "assistant", Text: "начало", StopReason: "cancelled"}},
+		{"после остановки без текста", chat.Record{Role: "assistant", StopReason: "cancelled"}},
+	}
+	for _, c := range cases {
+		base := []chat.Record{
+			{Role: "user", Text: "q1"},
+			{Role: "assistant", Text: "a1", StopReason: "end"},
+			{Role: "user", Text: "q2"},
+			c.stop,
+			{Role: chat.RoleRetract},
+		}
+		if got, want := flat(ResumeMessages(base)), "user:q1 | assistant:a1"; got != want {
+			t.Errorf("%s, отзыв последним: %s, ожидалось %s", c.name, got, want)
+		}
+		again := append(append([]chat.Record{}, base...),
+			chat.Record{Role: "user", Text: "q2"},
+			chat.Record{Role: "assistant", Text: "a2", StopReason: "end"})
+		if got, want := flat(ResumeMessages(again)), "user:q1 | assistant:a1 | user:q2 | assistant:a2"; got != want {
+			t.Errorf("%s, потом ответ: %s, ожидалось %s", c.name, got, want)
+		}
+	}
+}
+
+func TestResumeMessagesRetractAfterKeptTurnDropsIt(t *testing.T) {
+	records := []chat.Record{
+		{Role: "user", Text: "q1"},
+		{Role: "assistant", Text: "a1", StopReason: "end"},
+		{Role: "user", Text: "q2"},
+		{Role: "assistant", Text: "a2", StopReason: "end"},
+		{Role: chat.RoleRetract},
+		{Role: "user", Text: "q2"},
+		{Role: "assistant", Text: "a2 снова", StopReason: "end"},
+	}
+	if got, want := flat(ResumeMessages(records)), "user:q1 | assistant:a1 | user:q2 | assistant:a2 снова"; got != want {
+		t.Fatalf("%s, ожидалось %s", got, want)
+	}
+	// Два отзыва подряд (между ними вопрос не записан): снимаются два хода.
+	records = append(records[:4:4], chat.Record{Role: chat.RoleRetract}, chat.Record{Role: chat.RoleRetract})
+	if got := flat(ResumeMessages(records)); got != "" {
+		t.Fatalf("%q, ожидалась пустая история", got)
+	}
+}
+
+// Журналы командной строки не знают про stop_reason: ответ с текстом
+// остаётся, служебные записи ничего не меняют.
+func TestResumeMessagesOldStyleJournalUnchanged(t *testing.T) {
+	records := []chat.Record{
+		{Role: "user", Text: "q1"},
+		{Role: "assistant", Text: "a1"},
+		{Role: chat.RoleMeta, Title: "заголовок"},
+		{Role: "user", Text: "q2"},
+		{Role: "assistant", Text: "a2", StopReason: "end"},
+		{Role: chat.RoleTrim, Excerpts: 1},
+	}
+	if got, want := flat(ResumeMessages(records)), "user:q1 | assistant:a1 | user:q2 | assistant:a2"; got != want {
+		t.Fatalf("%s, ожидалось %s", got, want)
+	}
+}
+
+// Вопрос без ответа посреди журнала (процесс убит на ходу) не должен давать
+// два user подряд; ответ без вопроса (потерянная битая строка) пропускается.
+func TestResumeMessagesKeepsAlternationOnDamagedJournal(t *testing.T) {
+	records := []chat.Record{
+		{Role: "assistant", Text: "осиротевший ответ"},
+		{Role: "user", Text: "q1"},
+		{Role: "user", Text: "q2"},
+		{Role: "assistant", Text: "a2", StopReason: "end"},
+	}
+	if got, want := flat(ResumeMessages(records)), "user:q2 | assistant:a2"; got != want {
+		t.Fatalf("%s, ожидалось %s", got, want)
+	}
+}
+
+func TestLastTurnKept(t *testing.T) {
+	u := chat.Record{Role: "user", Text: "q"}
+	cases := []struct {
+		name string
+		recs []chat.Record
+		want bool
+	}{
+		{"нет записей", nil, false},
+		{"ход закончился", []chat.Record{u, {Role: "assistant", Text: "а", StopReason: "end"}}, true},
+		{"ошибка", []chat.Record{u, {Role: "assistant", Text: "начало", StopReason: "error"}}, false},
+		{"остановка с началом ответа", []chat.Record{u, {Role: "assistant", Text: "начало", StopReason: "cancelled"}}, false},
+		{"остановка до первого слова", []chat.Record{u, {Role: "assistant", StopReason: "cancelled"}}, false},
+		{"пустой ответ", []chat.Record{u, {Role: "assistant", StopReason: "end"}}, false},
+		{"запись командной строки", []chat.Record{u, {Role: "assistant", Text: "а"}}, true},
+		{"ответа нет", []chat.Record{u, {Role: "assistant", Text: "а", StopReason: "end"}, u}, false},
+		{"служебные записи в хвосте", []chat.Record{u, {Role: "assistant", Text: "а", StopReason: "end"}, {Role: chat.RoleMeta, Title: "т"}}, true},
+		{"ход после сбоя", []chat.Record{u, {Role: "assistant", StopReason: "error"}, {Role: chat.RoleRetract}, u, {Role: "assistant", Text: "а", StopReason: "end"}}, true},
+		{"отзыв последнего хода журнала", []chat.Record{
+			u, {Role: "assistant", Text: "а", StopReason: "end"}, u, {Role: "assistant", StopReason: "error"}, {Role: chat.RoleRetract}}, true},
+	}
+	for _, c := range cases {
+		if got := LastTurnKept(c.recs); got != c.want {
+			t.Errorf("%s: %v, ожидалось %v", c.name, got, c.want)
+		}
 	}
 }

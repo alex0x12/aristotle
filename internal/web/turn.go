@@ -119,7 +119,9 @@ func (s *Server) handleAgain(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "повторять нечего", http.StatusBadRequest)
 		return
 	}
-	inSession := lastTurnInSession(recs)
+	// Откатанного хода в сессии нет: снимать с неё нечего, иначе «ещё раз»
+	// после сбоя выбросило бы предыдущий, удавшийся ход.
+	inSession := app.LastTurnKept(recs)
 	s.runTurn(w, r, c, last, in.Profile, func() error {
 		if err := c.history.Append(chat.Record{Role: chat.RoleRetract}); err != nil {
 			return err
@@ -130,29 +132,6 @@ func (s *Server) handleAgain(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-}
-
-// lastTurnInSession — есть ли последний ход журнала в сессии в памяти.
-// Неудавшийся ход Turn из сессии откатывает, поэтому ход с ошибкой и ход,
-// отменённый до первого слова, в ней отсутствуют, а отменённый с началом
-// ответа runTurn возвращает сам. Без этой проверки «ещё раз» после сбоя
-// выбросило бы из сессии предыдущий, удавшийся ход.
-func lastTurnInSession(recs []chat.Record) bool {
-	for i := len(recs) - 1; i >= 0; i-- {
-		switch a := recs[i]; a.Role {
-		case "assistant":
-			switch a.StopReason {
-			case "end":
-				return true
-			case "error":
-				return false
-			}
-			return a.Text != "" // отменённый с началом ответа или запись из журнала без причины
-		case "user":
-			return false
-		}
-	}
-	return false
 }
 
 // runTurn ведёт один ход потоком событий. retract (может быть nil) вызывается
@@ -216,6 +195,7 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, 
 			out.send("block", b)
 		}
 	}
+	baseLen := len(sess.Messages)
 	res, err := sess.Turn(r.Context(), text,
 		func(delta string) {
 			partial.WriteString(delta)
@@ -248,15 +228,11 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, 
 	if err != nil {
 		rec.Text = partial.String()
 		if r.Context().Err() != nil {
-			// Остановлено пользователем. Turn откатил ход из сессии, а журнал
-			// его помнит — возвращаем в сессию вопрос и начало ответа, чтобы
-			// следующий ход видел то же, что видит человек.
+			// Остановлено пользователем. Turn откатил ход из сессии целиком, и
+			// так и остаётся: журнал и экран помнят вопрос и начало ответа, а
+			// для модели такого хода нет — как после перезапуска, когда
+			// сессия соберётся из журнала (app.AnswerKept).
 			rec.StopReason = "cancelled"
-			if rec.Text != "" {
-				sess.Messages = append(sess.Messages,
-					provider.Message{Role: provider.RoleUser, Text: text},
-					provider.Message{Role: provider.RoleAssistant, Text: rec.Text})
-			}
 			journal(rec)
 			return
 		}
@@ -268,6 +244,11 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, 
 	}
 
 	rec.Text, rec.StopReason = res.Text, "end"
+	if !app.AnswerKept(rec) {
+		// Пустой ответ в историю не идёт: провайдер отвергает сообщение без
+		// содержимого, а после перезапуска такого хода там тоже не будет.
+		sess.Messages = sess.Messages[:baseLen]
+	}
 	if res.Trim.Any() {
 		journal(chat.Record{Role: chat.RoleTrim, Excerpts: res.Trim.Excerpts, Turns: res.Trim.Turns})
 		out.send("trim", res.Trim)
