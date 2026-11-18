@@ -75,7 +75,7 @@ export async function showDialog(center, id, app) {
     <div class="status" id="status" hidden></div>
     <div class="banner" id="banner" hidden></div>
     <!-- Подсказка без рамки: ключа нет, и ход всё равно будет отказом (см. syncKeyHint) -->
-    <p class="hint" id="nokey" hidden>Ключ API не задан — откройте <a href="#/settings">«Настройки»</a> или выполните aristotle key</p>
+    <p class="hint" id="nokey" hidden>Ключ API не задан — задайте его в <a href="#/settings">«Настройках»</a></p>
     <form class="input" id="ask">
       <textarea id="q" rows="1" placeholder="Спросить Аристотеля…"></textarea>
       <button class="btn" type="submit" id="send">ΕΡΩΤΑΝ</button>

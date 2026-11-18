@@ -159,7 +159,7 @@ func TestTurnWithoutKeyUnderCorruptConfigHidesPath(t *testing.T) {
 	noKey(t, s)
 	s.NewProvider = nil // настоящий конструктор
 	rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос"}`)
-	if rec.Code != http.StatusBadRequest || strings.TrimSpace(rec.Body.String()) != app.ErrNoKey.Error() {
+	if rec.Code != http.StatusBadRequest || strings.TrimSpace(rec.Body.String()) != errNoKey.Error() {
 		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 	}
 	noPathNoParser(t, "ход без ключа", rec.Body.String(), s)

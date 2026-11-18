@@ -334,7 +334,7 @@ func TestAgainRefusedBeforeRetractKeepsQuestion(t *testing.T) {
 	do(t, h, http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос"}`)
 	noKey(t, s)
 	if rec := do(t, h, http.MethodPost, "/api/conversations/"+convID+"/again", `{}`); rec.Code != http.StatusBadRequest ||
-		!strings.Contains(rec.Body.String(), app.ErrNoKey.Error()) {
+		!strings.Contains(rec.Body.String(), errNoKey.Error()) {
 		t.Fatalf("код %d, ожидался 400 с текстом об отсутствии ключа: %s", rec.Code, rec.Body.String())
 	}
 	recs, _ := chat.History{Path: s.conv(convID).history.Path}.Load()

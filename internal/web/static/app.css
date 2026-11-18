@@ -15,6 +15,10 @@
   --lbl: #b3afa6; /* цвет малых подписей: светлее --ash, чтобы тонкие прописные не терялись */
   --line: rgba(233,230,223,.22); --glass: rgba(8,8,7,.80);
   --text: 'Alegreya', serif;
+  /* Родные элементы браузера (календарь, выпадающие списки, полосы прокрутки)
+     рисуются тёмными: страница тёмная, и светлое окошко календаря с серым
+     текстом в полях выбивалось из оформления. */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -231,8 +235,10 @@ table.usage tr.total td { border-top: 1px solid var(--line); border-bottom: none
 .keyrow input:focus { outline: none; border-color: var(--bone); }
 /* Поля дат на вкладке «Расход»: родные светло-серые не вяжутся с оформлением;
    color-scheme: dark красит и значок календаря. */
-input[type="date"] { background: rgba(0,0,0,.5); border: 1px solid var(--line); padding: 3px 8px; color-scheme: dark; }
+input[type="date"] { background: rgba(0,0,0,.5); border: 1px solid var(--line); padding: 3px 8px; color: var(--bone); }
 input[type="date"]:focus { outline: none; border-color: var(--bone); }
+input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .85; }
+input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
 .keyrow .btn { padding: 2px 12px; }
 .keyrow .warn { margin-left: 0; font-size: 14.5px; }
 .grid > input[type="number"] { max-width: 200px; }

@@ -254,7 +254,7 @@ func (s *Server) handleCheckKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if key == "" {
-		fail(0, app.ErrNoKey.Error())
+		fail(0, errNoKey.Error())
 		return
 	}
 	cfg, _ := s.loadConfig() // испорченный config.json — умолчания

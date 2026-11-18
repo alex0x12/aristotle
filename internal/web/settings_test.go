@@ -725,7 +725,7 @@ func TestCheckKeyWithoutKey(t *testing.T) {
 	writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1}`, fake.URL))
 	rec := do(t, s.Handler(), http.MethodPost, "/api/key/check", "")
 	m := jsonOf(t, rec)
-	if rec.Code != 200 || m["ok"] != false || m["message"] != app.ErrNoKey.Error() || keysOfMap(m) != "message,ok" {
+	if rec.Code != 200 || m["ok"] != false || m["message"] != errNoKey.Error() || keysOfMap(m) != "message,ok" {
 		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 	}
 	if called.Load() {
@@ -834,7 +834,7 @@ func TestEnvironmentKeysAreIgnored(t *testing.T) {
 			h := s.Handler()
 			for _, path := range []string{"/turns", "/again"} {
 				rec := do(t, h, http.MethodPost, "/api/conversations/"+convID+path, `{"text":"вопрос"}`)
-				if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), app.ErrNoKey.Error()) {
+				if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), errNoKey.Error()) {
 					t.Fatalf("%s: код %d: %s", path, rec.Code, rec.Body.String())
 				}
 			}
@@ -862,7 +862,7 @@ func TestTurnWithoutKeyIs400AndWritesNothing(t *testing.T) {
 	noKey(t, s)
 	for _, path := range []string{"/turns", "/again"} {
 		rec := do(t, h, http.MethodPost, "/api/conversations/"+convID+path, `{"text":"второй"}`)
-		if rec.Code != http.StatusBadRequest || strings.TrimSpace(rec.Body.String()) != app.ErrNoKey.Error() {
+		if rec.Code != http.StatusBadRequest || strings.TrimSpace(rec.Body.String()) != errNoKey.Error() {
 			t.Fatalf("%s: код %d: %q", path, rec.Code, rec.Body.String())
 		}
 	}

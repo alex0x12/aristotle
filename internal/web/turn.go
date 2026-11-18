@@ -48,9 +48,13 @@ func (s *Server) providerFor(c app.Connection) (provider.Provider, error) {
 	return app.NewProvider(c)
 }
 
+// errNoKey — ответ браузеру, когда ключа нет: только про «Настройки». Подсказка
+// про командную строку в веб-интерфейсе лишняя; консоль показывает app.ErrNoKey.
+var errNoKey = errors.New("ключ API не задан: задайте его в «Настройках»")
+
 // connection — подключение для хода: настройки с диска (испорченный
 // config.json — умолчания) и ключ из keys.json. Ошибка — готовый ответ
-// пользователю: нет ключа (app.ErrNoKey) или keys.json не читается; ни пути,
+// пользователю: нет ключа (errNoKey) или keys.json не читается; ни пути,
 // ни содержимого файлов в ней нет.
 func (s *Server) connection() (app.Connection, error) {
 	cfg, _ := s.loadConfig()
@@ -59,7 +63,7 @@ func (s *Server) connection() (app.Connection, error) {
 		return app.Connection{}, errors.New(keysUnreadableText + ": ключ не прочитать")
 	}
 	if key == "" {
-		return app.Connection{}, app.ErrNoKey
+		return app.Connection{}, errNoKey
 	}
 	return app.Connection{BaseURL: cfg.BaseURL, Model: cfg.Model, Key: key, ContextBudget: cfg.ContextBudget}, nil
 }
