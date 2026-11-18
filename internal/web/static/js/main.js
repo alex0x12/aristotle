@@ -1,8 +1,22 @@
 import { get, send, esc, fmtK, fmtTokens, fmtCost, answerTokens } from './api.js';
 import { showDialog } from './dialog.js';
 
-// Экраны библиотеки и настроек подгружаются по требованию (задачи 9 и 10).
-const lazy = name => import(`./${name}.js`);
+// Экраны библиотеки и настроек подгружаются по требованию. Удавшаяся загрузка
+// запоминается здесь, а не только в браузере: после повтора с меткой (см.
+// lazy) обычный адрес модуля остался бы за ошибкой.
+const loaded = new Map();
+
+// retry — повторная попытка после неудачи. Модульная карта HTML вправе помнить
+// неудавшийся import по адресу и отвечать ту же ошибку, даже когда файл уже
+// есть. Chromium (проверено 18.11.26) повторяет сам, Firefox и Safari не
+// проверялись; метка в запросе делает адрес новым, и загрузка идёт заново в
+// любом из них.
+async function lazy(name, retry) {
+  if (loaded.has(name)) return loaded.get(name);
+  const mod = await import(retry ? `./${name}.js?retry=${Date.now()}` : `./${name}.js`);
+  loaded.set(name, mod);
+  return mod;
+}
 
 export const app = {
   state: null,
@@ -23,8 +37,23 @@ export const app = {
     const sel = document.getElementById('profile');
     sel.innerHTML = (this.state.profiles ?? []).map(p =>
       `<option value="${esc(p.name)}">${esc(p.name)} · ${esc(p.model)}</option>`).join('');
+    // Профиль, убранный в настройках, больше не выбран: ход с ним был бы отказом.
+    if (!this.state.profiles?.some(p => p.name === this.profile)) this.profile = '';
     sel.value = this.profile || this.state.default;
     sel.onchange = () => { this.profile = sel.value; this.onContext(this.lastUsed); };
+    this.paintMonth();
+  },
+
+  // paintMonth — итог месяца подсказкой к строке расхода в шапке. «≈» — в нём
+  // есть оборванные ответы или ответы без цены, сумма неполная.
+  paintMonth() {
+    const m = this.state?.month;
+    const line = document.getElementById('usage-line');
+    if (!m?.answers) { line.title = 'за месяц: расхода нет'; return; }
+    const tokens = (m.input ?? 0) + (m.output ?? 0) + (m.cache_read ?? 0) + (m.cache_write ?? 0);
+    const text = tokens || !m.partial ? (m.partial ? '≈' : '') + fmtTokens(tokens) + ' ток.' : '—';
+    const cost = m.cost_usd != null ? ' · ' + (m.partial || m.cost_partial ? '≈' : '') + fmtCost(m.cost_usd) : '';
+    line.title = 'за месяц: ' + text + cost;
   },
 
   async refreshConvs() {
@@ -84,16 +113,26 @@ export const app = {
     this.paintUsage();
   },
 
-  onDone() { this.refreshConvs(); },
+  async onDone() {
+    this.refreshConvs();
+    // Итог месяца вырос; подсказку обновляем, не трогая выбор профиля в шапке.
+    try { this.state.month = (await get('/api/state')).month; this.paintMonth(); } catch { /* шапка подождёт */ }
+  },
 };
 
-// screen — экран из отдельного модуля; не загрузился — сказать об этом, а не
-// оставить на месте прежний.
-async function screen(center, name, show) {
+// screen — экран из отдельного модуля; не загрузился — сказать об этом
+// спокойно, а не оставить на месте прежний. Текст ошибки браузера
+// («error loading dynamically imported module …») человеку ничего не даёт и в
+// страницу не попадает — только в консоль. «повторить» грузит модуль заново.
+async function screen(center, name, show, retry = false) {
   try {
-    return await show(await lazy(name));
+    return await show(await lazy(name, retry));
   } catch (e) {
-    center.innerHTML = `<div class="dialog"><p class="status">экран не открылся: ${esc(e.message)}</p></div>`;
+    console.error(`экран «${name}» не открылся`, e);
+    center.innerHTML = `<div class="dialog"><p class="status">экран не открылся</p>
+      <div class="row"><button class="btn ghost" id="retry" type="button">повторить</button></div></div>`;
+    const btn = center.querySelector('#retry');
+    btn.addEventListener('click', () => { btn.disabled = true; screen(center, name, show, true); });
   }
 }
 

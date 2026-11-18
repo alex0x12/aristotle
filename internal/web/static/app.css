@@ -218,4 +218,18 @@ blockquote.quote cite { display: block; font-style: normal; color: var(--lbl); m
 table.usage { width: 100%; border-collapse: collapse; font-size: 15px; }
 table.usage th { color: var(--ash); text-align: right; border-bottom: 1px solid var(--line); padding: 4px 8px; }
 table.usage td { text-align: right; padding: 3px 8px; border-bottom: 1px solid rgba(233,230,223,.08); font-variant-numeric: tabular-nums; }
-table.usage th:first-child, table.usage td:first-child, table.usage td:nth-child(2) { text-align: left; }
+table.usage th:first-child, table.usage th:nth-child(2), table.usage td:first-child, table.usage td:nth-child(2) { text-align: left; }
+table.usage tr.total td { border-top: 1px solid var(--line); border-bottom: none; color: var(--bone); }
+
+/* экран настроек: предупреждения и строка ключа */
+.settings .banner { margin-bottom: 12px; }
+/* подсказка о ключе — отдельной строкой над полем ввода и кнопками */
+.keyrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.keyrow .hint { flex-basis: 100%; }
+.keyrow input { flex: 1 1 160px; max-width: 260px; }
+.keyrow .btn { padding: 2px 12px; }
+.keyrow .warn { margin-left: 0; font-size: 14.5px; }
+.grid > input[type="number"] { max-width: 200px; }
+.grid input[type="checkbox"] { justify-self: start; accent-color: var(--bone); }
+.grid input:disabled, .grid select:disabled { opacity: .4; }
+.grid input:focus, .grid select:focus { outline: none; border-color: var(--bone); }

@@ -47,6 +47,13 @@ type Server struct {
 	// Предел одного поиска; ноль — defaultSearchTimeout. Поле нужно тесту,
 	// чтобы не ждать 90 секунд.
 	searchTimeout time.Duration
+	// Предел проверки ключа; ноль — defaultKeyCheckTimeout.
+	keyCheckTimeout time.Duration
+
+	// keysMu стоит над каждой записью keys.json (замена, удаление, чистка после
+	// убранного профиля): keys.Store замка не имеет, а запись — это чтение всего
+	// файла и замена целиком.
+	keysMu sync.Mutex
 
 	mu    sync.Mutex
 	convs map[string]*conv
@@ -105,6 +112,13 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/corpus/works", s.handleWorks)
 	mux.HandleFunc("GET /api/corpus/chapter", s.handleChapter)
 	mux.HandleFunc("GET /api/corpus/search", s.handleSearch)
+	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
+	mux.HandleFunc("PUT /api/settings", s.handlePutSettings)
+	mux.HandleFunc("PUT /api/keys/{profile}", s.handlePutKey)
+	mux.HandleFunc("DELETE /api/keys/{profile}", s.handleDeleteKey)
+	mux.HandleFunc("POST /api/keys/{profile}/check", s.handleCheckKey)
+	mux.HandleFunc("GET /api/usage", s.handleUsage)
+	mux.HandleFunc("GET /api/conversations/{id}/export.md", s.handleExport)
 }
 
 // guard пропускает только запросы к себе и только со своей страницы.
