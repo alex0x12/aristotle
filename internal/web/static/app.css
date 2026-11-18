@@ -137,6 +137,8 @@ blockquote.quote cite { display: block; font-style: normal; font-family: var(--c
 .src .in { position: relative; padding: 16px; font-size: 13.5px; line-height: 1.5; overflow-y: auto; flex: 1; }
 .src h5 { font-family: var(--caps); letter-spacing: .25em; font-size: 11px; color: var(--ash); font-weight: 400; }
 .src h6 { font-family: var(--caps); letter-spacing: .14em; font-size: 14px; font-weight: 400; margin: 4px 0 10px; text-transform: uppercase; }
+/* английская ссылка под русским названием: мельче, без заглавных */
+.src h6 small { display: block; font-size: .8em; letter-spacing: .08em; color: var(--ash); text-transform: none; margin-top: 3px; }
 .src .close { position: absolute; top: 8px; right: 12px; background: none; border: none; font-size: 18px; color: var(--ash); cursor: pointer; }
 .src .ru { font-style: italic; margin-bottom: 6px; }
 .src .state { font-family: var(--caps); letter-spacing: .12em; font-size: 11px; margin-bottom: 10px; }
@@ -165,6 +167,8 @@ blockquote.quote cite { display: block; font-style: normal; font-family: var(--c
 .library .work > button::before { content: ''; flex: none; width: 5px; height: 5px; border-right: 1px solid var(--ash);
   border-bottom: 1px solid var(--ash); transform: translateY(-2px) rotate(-45deg); transition: transform .12s; }
 .library .work > button[aria-expanded="true"]::before { transform: translateY(-3px) rotate(45deg); }
+/* в списке работ русское название главное, английское — второй строкой мельче */
+.library .work > button .wt small { display: block; font-size: .82em; color: var(--ash); }
 .library .chapters { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 8px 13px; }
 .library .chapters a { font-size: 12px; text-decoration: none; border: 1px solid var(--line); padding: 0 5px; }
 .library .chapters a.on, .library .chapters a:hover { border-color: var(--bone); }
@@ -179,6 +183,7 @@ blockquote.quote cite { display: block; font-style: normal; font-family: var(--c
 .reader .hit { display: block; text-decoration: none; border-bottom: 1px solid var(--line); padding: 9px 6px; }
 .reader .hit:hover { background: rgba(233,230,223,.05); }
 .reader .hit b { font-family: var(--caps); letter-spacing: .12em; font-weight: 400; font-size: 13px; text-transform: uppercase; }
+.reader .hit small { font-size: .8em; color: var(--ash); margin-left: 8px; }
 .reader .hit .snip { display: block; color: var(--soft); font-size: 14px; margin-top: 2px; }
 .reader .banner { max-width: 46em; }
 .badge { font-family: var(--caps); font-size: 10px; letter-spacing: .12em; border: 1px solid var(--dim); color: var(--ash); padding: 0 4px; margin-left: 6px; }

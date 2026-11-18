@@ -1,6 +1,7 @@
 import { get, esc, usageText, usageIsPartial } from './api.js';
 import { readSSE } from './stream.js';
 import { openSource } from './sources.js';
+import { quoteHead } from './titles.js';
 
 const EXAMPLES = [
   'Что такое добродетель?', 'В чём счастье человека?',
@@ -26,8 +27,10 @@ export function blockEl(b, quotesUnknown = false) {
   if (b.kind === 'quote') {
     const mark = quotesUnknown ? '<span class="unk">сверка не сохранена</span>'
       : b.verified ? '' : '<span class="warn">нет в выдержках</span>';
+    // Ссылка по-русски («Никомахова этика · II.1»), если сервер знает название работы;
+    // cite_ru и work_ru бывают без ключа. Английскую ссылку покажет панель источников.
     const q = el(`<blockquote class="quote${b.verified || quotesUnknown ? '' : ' bad'}" title="Открыть главу">
-      ${esc(b.ru || b.en)}<cite>${esc(b.cite || 'без ссылки')}${mark}</cite></blockquote>`);
+      ${esc(b.ru || b.en)}<cite>${quoteHead(b).html}${mark}</cite></blockquote>`);
     q.addEventListener('click', () => openSource(quotesUnknown ? { ...b, unknown: true } : b));
     return q;
   }

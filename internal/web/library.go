@@ -33,6 +33,7 @@ type bookRef struct {
 type workRef struct {
 	Slug         string    `json:"slug"`
 	Title        string    `json:"title"`
+	TitleRu      string    `json:"title_ru,omitempty"` // нет в таблице корпуса — ключа нет, показывается Title
 	Group        string    `json:"group"`
 	Authenticity string    `json:"authenticity"`
 	Translator   string    `json:"translator,omitempty"`
@@ -96,7 +97,8 @@ func loadWorks(dir string) ([]workRef, error) {
 		}
 		w, ok := byWork[ch.WorkSlug]
 		if !ok {
-			w = &workRef{Slug: ch.WorkSlug, Title: ch.Work, Group: ch.Group,
+			ru, _ := corpus.TitleRu(ch.WorkSlug)
+			w = &workRef{Slug: ch.WorkSlug, Title: ch.Work, TitleRu: ru, Group: ch.Group,
 				Authenticity: ch.Authenticity, Translator: ch.Translator}
 			byWork[ch.WorkSlug] = w
 			books[ch.WorkSlug] = map[string]*bookRef{}
@@ -243,10 +245,16 @@ func (s *Server) handleChapter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "глава повреждена", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{
+	out := map[string]any{
 		"work": ch.Work, "book": ch.Book, "number": ch.Number, "cite": ch.Cite, "group": ch.Group,
 		"authenticity": ch.Authenticity, "translator": ch.Translator, "path": ch.Path, "text": ch.Text,
-	})
+	}
+	// Работы нет в таблице названий — ключа нет, а не пустая строка: как у
+	// прочих необязательных полей, интерфейс читает его с запасным значением.
+	if ru, ok := corpus.TitleRu(ch.WorkSlug); ok {
+		out["work_ru"] = ru
+	}
+	writeJSON(w, out)
 }
 
 func snippet(text string, n int) string {
@@ -261,6 +269,7 @@ type hitView struct {
 	Cite         string `json:"cite"`
 	Path         string `json:"path"`
 	Work         string `json:"work"`
+	WorkRu       string `json:"work_ru,omitempty"`
 	Authenticity string `json:"authenticity"`
 	Snippet      string `json:"snippet"`
 }
@@ -351,7 +360,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, h := range hits {
 		c := h.Chapter
-		out = append(out, hitView{Cite: c.Cite, Path: c.Path, Work: c.Work,
+		ru, _ := corpus.TitleRu(c.WorkSlug)
+		out = append(out, hitView{Cite: c.Cite, Path: c.Path, Work: c.Work, WorkRu: ru,
 			Authenticity: c.Authenticity, Snippet: snippet(c.Text, 280)})
 	}
 	writeJSON(w, out)

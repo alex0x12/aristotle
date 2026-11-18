@@ -191,8 +191,8 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, 
 	asm := &render.Assembler{}
 	emit := func(bs []render.Block) {
 		for _, b := range bs {
-			blocks = append(blocks, b)
-			out.send("block", b)
+			blocks = append(blocks, b) // в журнал уходит чистый Block
+			out.send("block", blockForWire(b))
 		}
 	}
 	baseLen := len(sess.Messages)

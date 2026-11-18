@@ -1,5 +1,6 @@
 import { get, esc } from './api.js';
 import { findExcerpt } from './normalize.js';
+import { quoteHead } from './titles.js';
 
 // paragraphs — текст главы абзацами, с <mark> на найденных диапазонах.
 // Абзацы режутся до подсветки, чтобы <mark> не пересекал границу <p>.
@@ -33,8 +34,11 @@ export async function openSource(b) {
   panel.hidden = false;
   const state = b.unknown ? ['', 'СВЕРКА НЕ СОХРАНЕНА']
     : b.verified ? ['ok', 'СВЕРЕНО С ГЛАВОЙ'] : ['bad', 'НЕТ В ВЫДЕРЖКАХ'];
+  // Русское название работы — заголовком, под ним мельче английская ссылка:
+  // текст главы английский, и по ней его находят в корпусе.
+  const head = quoteHead(b);
   box.innerHTML = `<button class="close" title="Закрыть" type="button">×</button>
-    <h5>ИСТОЧНИК</h5><h6>${esc(b.cite || 'без ссылки')}</h6>
+    <h5>ИСТОЧНИК</h5><h6>${head.html}${head.en ? `<small>${head.en}</small>` : ''}</h6>
     ${b.ru ? `<p class="ru">${esc(b.ru)}</p>` : ''}
     <p class="state ${state[0]}">${state[1]}</p>
     <div class="chapter">загружаю главу…</div>`;

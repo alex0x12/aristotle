@@ -93,7 +93,7 @@ func summarize(id string, recs []chat.Record) convSummary {
 type item struct {
 	Type          string          `json:"type"` // user, assistant, trim
 	Text          string          `json:"text,omitempty"`
-	Blocks        []render.Block  `json:"blocks,omitempty"`
+	Blocks        []blockView     `json:"blocks,omitempty"`
 	Usage         *provider.Usage `json:"usage,omitempty"`
 	CostUSD       *float64        `json:"cost_usd,omitempty"`
 	Profile       string          `json:"profile,omitempty"`
@@ -146,7 +146,7 @@ func items(recs []chat.Record) []item {
 			out = append(out, item{Type: "user", Text: r.Text})
 		case "assistant":
 			blocks, unknown := blocksOf(r)
-			out = append(out, item{Type: "assistant", Text: r.Text, Blocks: blocks,
+			out = append(out, item{Type: "assistant", Text: r.Text, Blocks: blocksForWire(blocks),
 				Usage: r.Usage, CostUSD: r.CostUSD, Profile: r.Profile, Model: r.Model,
 				StopReason: r.StopReason, QuotesUnknown: unknown && r.Quotes == nil})
 		case chat.RoleTrim:

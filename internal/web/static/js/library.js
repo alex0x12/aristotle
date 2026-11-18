@@ -1,5 +1,6 @@
 import { get, esc } from './api.js';
 import { paragraphs } from './sources.js';
+import { chapterHead } from './titles.js';
 
 const GROUPS = {
   logic: 'ЛОГИКА', physics: 'ФИЗИКА', psychology: 'ПСИХОЛОГИЯ', biology: 'БИОЛОГИЯ',
@@ -20,6 +21,9 @@ function badge(a) {
 function reason(e) {
   return e instanceof TypeError ? 'нет связи с сервером' : e.message;
 }
+
+// shown — название работы в списке: русское, а нет его (title_ru без ключа) — английское.
+const shown = w => w.title_ru || w.title || w.slug || '';
 
 const groupName = g => GROUPS[g] ?? (g ? g.toUpperCase() : 'ПРОЧЕЕ');
 
@@ -80,8 +84,10 @@ export async function showLibrary(center, path) {
 
   const showHits = ({ q, hits }) => {
     reader.innerHTML = hits.length
-      ? `<p class="hint">найдено: ${hits.length} · «${esc(q)}»</p>` + hits.map(h =>
-        `<a class="hit" data-path="${esc(h.path)}" href="#/library/${esc(encodeURI(h.path ?? ''))}"><b>${esc(h.cite)}</b>${badge(h.authenticity)}<span class="snip">${esc(h.snippet)}</span></a>`).join('')
+      ? `<p class="hint">найдено: ${hits.length} · «${esc(q)}»</p>` + hits.map(h => {
+        const head = chapterHead(h.work_ru, h.work, h.cite);
+        return `<a class="hit" data-path="${esc(h.path)}" href="#/library/${esc(encodeURI(h.path ?? ''))}"><b>${head.html}</b>${head.en ? `<small>${head.en}</small>` : ''}${badge(h.authenticity)}<span class="snip">${esc(h.snippet)}</span></a>`;
+      }).join('')
       : `<p class="hint">по запросу «${esc(q)}» ничего не найдено</p>`;
     reader.scrollTop = 0;
   };
@@ -94,8 +100,10 @@ export async function showLibrary(center, path) {
       const ch = await get('/api/corpus/chapter?path=' + encodeURIComponent(p), signal);
       if (my !== seq) return;
       // translator и book у сервера бывают пустыми; text читаем так же, как sources.js.
-      reader.innerHTML = `<h2>${esc(ch.cite)}</h2>
-        <div class="sub">${esc(ch.work)}${ch.translator ? ' · перевод ' + esc(ch.translator) : ''}${badge(ch.authenticity)}</div>
+      // work_ru бывает без ключа: тогда заголовок и подзаголовок прежние, английские.
+      const head = chapterHead(ch.work_ru, ch.work, ch.cite);
+      reader.innerHTML = `<h2>${head.html}</h2>
+        <div class="sub">${head.en || esc(ch.work)}${ch.translator ? ' · перевод ' + esc(ch.translator) : ''}${badge(ch.authenticity)}</div>
         ${paragraphs(ch.text ?? '')}`;
       reader.scrollTop = 0;
     } catch (e) {
@@ -160,11 +168,13 @@ export async function showLibrary(center, path) {
     const works = (await get('/api/corpus/works')) ?? [];
     const byGroup = {};
     for (const w of works) (byGroup[w.group ?? ''] ??= []).push(w);
+    // Сервер сортирует по английскому названию, а читатель ищет по русскому.
+    for (const list of Object.values(byGroup)) list.sort((a, b) => shown(a).localeCompare(shown(b), 'ru'));
     // Известные группы — в порядке корпуса, неизвестные (новые в корпусе) — следом.
     const order = [...Object.keys(GROUPS), ...Object.keys(byGroup).filter(g => !(g in GROUPS))];
     worksBox.innerHTML = order.filter(g => byGroup[g]).map(g =>
       `<h4>${esc(groupName(g))}</h4>` + byGroup[g].map(w => `<div class="work">
-        <button type="button" aria-expanded="false">${esc(w.title ?? w.slug)}${badge(w.authenticity)}</button>
+        <button type="button" aria-expanded="false"><span class="wt">${esc(shown(w))}${w.title_ru ? `<small>${esc(w.title)}</small>` : ''}</span>${badge(w.authenticity)}</button>
         <div class="chapters" hidden>${(w.books ?? []).map(b =>
           ((b.book ?? '') ? `<span class="book">КНИГА ${esc(b.book.toUpperCase())}</span>` : '') +
           (b.chapters ?? []).map(c =>
