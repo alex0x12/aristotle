@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -59,17 +60,64 @@ func TestIndexIsServed(t *testing.T) {
 }
 
 func TestStateNeverShowsKeys(t *testing.T) {
-	s := newTestServer(t, nil, nil)
-	if err := (keys.Store{Path: s.Paths.Keys}).Set("claude", "sk-ant-секрет-a1b2"); err != nil {
+	// Выдуманные значения без вендорского префикса: ни за настоящий ключ, ни
+	// за образец формата их не принять, и утечку без префикса они тоже ловят.
+	const (
+		envSecret  = "zq-выдуманный-секрет-из-окружения-7731"
+		fileSecret = "zq-выдуманный-секрет-из-файла-4096"
+	)
+	s := newTestServer(t, nil, nil) // обнуляет окружение с ключами
+	t.Setenv("DEEPSEEK_API_KEY", envSecret)
+	if err := (keys.Store{Path: s.Paths.Keys}).Set("claude", fileSecret); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ANTHROPIC_API_KEY", "")
+
 	rec := do(t, s.Handler(), http.MethodGet, "/api/state", "")
 	body := rec.Body.String()
-	if rec.Code != 200 || strings.Contains(body, "sk-ant") {
-		t.Fatalf("код %d; ключ утёк в ответ: %s", rec.Code, body)
+	if rec.Code != 200 {
+		t.Fatalf("код %d, ожидался 200", rec.Code)
 	}
-	if !strings.Contains(body, `"source":"file"`) || !strings.Contains(body, `"hint":"…a1b2"`) {
-		t.Fatalf("нет сведений о ключе: %s", body)
+
+	// Ключ целиком и всё, кроме последних четырёх символов, наружу не идёт;
+	// пятый с конца символ вместе с подсказкой уже указал бы на лишнее.
+	for name, secret := range map[string]string{"из окружения": envSecret, "из файла": fileSecret} {
+		r := []rune(secret)
+		for _, leak := range []string{secret, string(r[:len(r)-4]), string(r[len(r)-5:])} {
+			if strings.Contains(body, leak) {
+				t.Errorf("ключ %s: в ответе есть %d символов ключа, наружу идут только последние четыре", name, len([]rune(leak)))
+			}
+		}
+	}
+	if strings.Contains(body, "секрет") {
+		t.Error("в ответе есть слово из ключа")
+	}
+
+	var state struct {
+		Profiles []struct {
+			Name string  `json:"name"`
+			Key  keyView `json:"key"`
+		} `json:"profiles"`
+	}
+	if err := json.Unmarshal([]byte(body), &state); err != nil {
+		t.Fatalf("ответ не разобрать: %v", err)
+	}
+	got := map[string]keyView{}
+	for _, p := range state.Profiles {
+		got[p.Name] = p.Key
+	}
+	want := map[string]keyView{
+		"deepseek":   {Source: "env", Hint: "…7731"},
+		"claude":     {Source: "file", Hint: "…4096"},
+		"openai":     {Source: "none"},
+		"openrouter": {Source: "none"},
+	}
+	for name, w := range want {
+		// Подсказку в сообщение не кладём: при утечке там оказался бы ключ.
+		if got[name].Source != w.Source {
+			t.Errorf("профиль %s: источник ключа %q, ожидался %q", name, got[name].Source, w.Source)
+		}
+		if got[name].Hint != w.Hint {
+			t.Errorf("профиль %s: подсказка ключа не совпала с ожидаемой", name)
+		}
 	}
 }

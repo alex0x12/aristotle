@@ -57,10 +57,24 @@ func (f fakeFinder) Search(context.Context, string, string, int) ([]corpus.Hit, 
 	return f.hits, nil
 }
 
+// isolateKeyEnv обнуляет переменные окружения с ключами всех встроенных
+// профилей: тест не должен ни зависеть от настоящих ключей разработчика, ни
+// выводить их (подсказка ключа попадает в /api/state). Список берётся из
+// config.Builtin, чтобы новый профиль не остался в стороне.
+func isolateKeyEnv(t *testing.T) {
+	t.Helper()
+	for _, p := range config.Builtin().Profiles {
+		t.Setenv(p.KeyEnv, "")
+	}
+}
+
 // newTestServer — сервер на временных каталогах, с подменённым провайдером
-// и поиском; порт 8337 — для проверки Host и Origin.
+// и поиском; порт 8337 — для проверки Host и Origin. Окружение с ключами
+// обнулено; тесту, которому нужен ключ в окружении, достаточно t.Setenv
+// после вызова.
 func newTestServer(t *testing.T, prov provider.Provider, finder chat.Finder) *Server {
 	t.Helper()
+	isolateKeyEnv(t)
 	home := t.TempDir()
 	s := New(t.TempDir(), app.Paths{
 		Config:  filepath.Join(home, "config.json"),
