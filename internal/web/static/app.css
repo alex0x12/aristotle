@@ -229,6 +229,10 @@ table.usage tr.total td { border-top: 1px solid var(--line); border-bottom: none
 .keyrow .hint { flex-basis: 100%; }
 .keyrow input { flex: 1 1 160px; max-width: 260px; background: rgba(0,0,0,.5); border: 1px solid var(--line); padding: 3px 8px; }
 .keyrow input:focus { outline: none; border-color: var(--bone); }
+/* Поля дат на вкладке «Расход»: родные светло-серые не вяжутся с оформлением;
+   color-scheme: dark красит и значок календаря. */
+input[type="date"] { background: rgba(0,0,0,.5); border: 1px solid var(--line); padding: 3px 8px; color-scheme: dark; }
+input[type="date"]:focus { outline: none; border-color: var(--bone); }
 .keyrow .btn { padding: 2px 12px; }
 .keyrow .warn { margin-left: 0; font-size: 14.5px; }
 .grid > input[type="number"] { max-width: 200px; }
