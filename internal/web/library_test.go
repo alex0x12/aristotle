@@ -445,7 +445,8 @@ func TestSearchQueryIsSingleArgument(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("код %d, %s", rec.Code, rec.Body.String())
 	}
-	if len(got) < 2 || got[0] != "query" || got[1] != q {
+	// Запрос — последний аргумент, после «--»: так qmd не примет его за флаг.
+	if len(got) < 3 || got[0] != "query" || got[len(got)-2] != "--" || got[len(got)-1] != q {
 		t.Fatalf("аргументы qmd: %q", got)
 	}
 }

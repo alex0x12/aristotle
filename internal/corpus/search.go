@@ -45,8 +45,12 @@ func (s *Searcher) Search(ctx context.Context, query, group string, k int) ([]Hi
 		run = RunQmd
 	}
 
-	out, err := run(ctx, "query", query, "-c", s.Collection,
-		"--json", "-n", strconv.Itoa(k))
+	// Запрос — позиционный аргумент, а qmd читает начало с «-» как свой флаг
+	// («--help» печатает справку, «-c чужая» подменяет коллекцию). Поэтому
+	// флаги идут первыми, а запрос — последним, после «--»: всё за ним qmd
+	// (util.parseArgs) принимает как позиционное, что бы там ни было написано.
+	out, err := run(ctx, "query", "-c", s.Collection,
+		"--json", "-n", strconv.Itoa(k), "--", query)
 	if err != nil {
 		return nil, fmt.Errorf("qmd query: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -86,6 +87,31 @@ func TestSearchPassesCollectionAndLimit(t *testing.T) {
 		if !strings.Contains(joined, strings.ReplaceAll(want, " ", " ")) {
 			t.Errorf("в аргументах нет %q: %v", want, got)
 		}
+	}
+}
+
+// TestSearchQueryIsLastAfterTerminator: запрос — позиционный аргумент qmd, и
+// qmd читает начало с «-» как флаг (`--help` печатает справку, `-c чужая`
+// подменяет коллекцию). Поэтому все флаги идут первыми, а запрос — последним,
+// после «--», как есть; ничего из запроса до «--» не попадает, а «-c» и
+// коллекция — собственные у Searcher.
+func TestSearchQueryIsLastAfterTerminator(t *testing.T) {
+	for _, q := range []string{"--help", "-c other", "-n 1", "--json", "-", "happiness", "две  слова; $(id)"} {
+		t.Run(q, func(t *testing.T) {
+			var got []string
+			s := &Searcher{Collection: "mine", Root: t.TempDir(),
+				Run: func(_ context.Context, args ...string) ([]byte, error) {
+					got = args
+					return []byte("[]"), nil
+				}}
+			if _, err := s.Search(context.Background(), q, "", 4); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"query", "-c", "mine", "--json", "-n", "4", "--", q}
+			if !slices.Equal(got, want) {
+				t.Fatalf("аргументы qmd:\n got  %q\n want %q", got, want)
+			}
+		})
 	}
 }
 
