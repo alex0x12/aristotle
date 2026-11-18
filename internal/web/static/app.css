@@ -75,6 +75,18 @@ a { color: inherit; }
   background: #1a1a18 url('img/aristotle-bust.png') center 18% / 118% no-repeat; filter: grayscale(1) contrast(1.1); }
 .cap { text-align: center; color: #b9b5ac; margin-top: 8px; }
 .convs { flex: 0 1 auto; overflow-y: auto; min-height: 0; }
+/* Полоса прокрутки списка бесед — слева: справа она закрывала «×» удаления.
+   direction: rtl у контейнера переносит полосу налево, direction: ltr у строк
+   возвращает им обычный порядок (название слева, «×» справа). Полоса тонкая и
+   в цвете оформления. Зазор в 6 px — чтобы она не наезжала на левую черту
+   активной беседы; он нужен, только когда полоса есть (класс .scrolls ставит
+   main.js), иначе список без нужды съехал бы вправо. */
+.convs { direction: rtl; scrollbar-width: thin; scrollbar-color: var(--lbl) transparent; }
+.convs > .conv { direction: ltr; }
+.convs.scrolls { padding-left: 6px; }
+.convs::-webkit-scrollbar { width: 6px; }
+.convs::-webkit-scrollbar-track { background: transparent; }
+.convs::-webkit-scrollbar-thumb { background: var(--lbl); border-radius: 3px; }
 .conv { display: flex; align-items: baseline; gap: 6px; padding: 2px 0 2px 9px; border-left: 2px solid transparent;
   opacity: .7; cursor: pointer; text-decoration: none; }
 .conv:hover { opacity: .9; }

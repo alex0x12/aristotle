@@ -96,6 +96,12 @@ export const app = {
       });
       box.append(row);
     }
+    // Полоса прокрутки списка слева (см. .convs в app.css); зазор от неё нужен,
+    // только пока она есть. Высота списка меняется и с окном, не только с числом
+    // бесед, поэтому за размером следит ResizeObserver.
+    const sync = () => box.classList.toggle('scrolls', box.scrollHeight > box.clientHeight);
+    sync();
+    if (!this.convsWatch) { this.convsWatch = new ResizeObserver(sync); this.convsWatch.observe(box); }
   },
 
   // paintUsage — вторая строка шапки: ответ и беседа, только токены.
