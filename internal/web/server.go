@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"path"
 	"sync"
+	"time"
 
 	"github.com/alex0x12/aristotle/internal/app"
 	"github.com/alex0x12/aristotle/internal/chat"
@@ -42,6 +43,10 @@ type Server struct {
 	Finder      chat.Finder
 	System      string
 	HTTPClient  *http.Client
+
+	// Предел одного поиска; ноль — defaultSearchTimeout. Поле нужно тесту,
+	// чтобы не ждать 90 секунд.
+	searchTimeout time.Duration
 
 	mu    sync.Mutex
 	convs map[string]*conv

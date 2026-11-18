@@ -1,17 +1,21 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alex0x12/aristotle/internal/corpus"
 )
@@ -476,6 +480,107 @@ func TestSearchWithoutQmdIs502(t *testing.T) {
 	}
 	if _, err := exec.LookPath("qmd"); err == nil {
 		t.Fatal("тест не изолирован от PATH")
+	}
+}
+
+// blockingSearcher — Searcher, чей «qmd» висит, пока не отменят контекст;
+// observed закрывается, когда отмена дошла до Run.
+func blockingSearcher(t *testing.T) (*corpus.Searcher, <-chan struct{}, <-chan struct{}) {
+	t.Helper()
+	entered, observed := make(chan struct{}), make(chan struct{})
+	return &corpus.Searcher{Collection: "aristotle", Root: t.TempDir(),
+		Run: func(ctx context.Context, _ ...string) ([]byte, error) {
+			close(entered)
+			<-ctx.Done()
+			close(observed)
+			return nil, ctx.Err()
+		}}, entered, observed
+}
+
+// serveAsync гонит запрос через Handler в горутине и ждёт не дольше limit:
+// без предела зависший поиск не вернулся бы никогда, и тест должен упасть,
+// а не повиснуть. Контекст запроса отменяется на выходе — страховка, чтобы
+// блокирующий Run не пережил тест.
+func serveAsync(t *testing.T, s *Server, ctx context.Context, target string, limit time.Duration) (*httptest.ResponseRecorder, bool) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(ctx)
+	req.Host = "127.0.0.1:8337"
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { s.Handler().ServeHTTP(rec, req); close(done) }()
+	select {
+	case <-done:
+		return rec, true
+	case <-time.After(limit):
+		return nil, false
+	}
+}
+
+// Зависший qmd (в том числе первый запуск, который качает модель на 1,2 ГБ)
+// не должен держать запрос вечно: по сроку — 504 с короткой причиной, а
+// отмена доходит до самого Run.
+func TestSearchTimeoutIs504(t *testing.T) {
+	f, _, observed := blockingSearcher(t)
+	s := newTestServer(t, nil, f)
+	s.searchTimeout = 50 * time.Millisecond
+	start := time.Now()
+	rec, ok := serveAsync(t, s, context.Background(), "/api/corpus/search?q=habit", 3*time.Second)
+	if !ok {
+		t.Fatal("поиск не оборван по сроку: обработчик не вернулся за 3 с")
+	}
+	if rec.Code != http.StatusGatewayTimeout || !strings.Contains(rec.Body.String(), "поиск не уложился во время") {
+		t.Fatalf("код %d, %q", rec.Code, rec.Body.String())
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("ответ через %v при пределе 50 мс", d)
+	}
+	select {
+	case <-observed:
+	default:
+		t.Fatal("отмена не дошла до Run")
+	}
+}
+
+// Читатель ушёл со страницы (fetch прерван): отвечать некому, и в журнал это
+// ошибкой не пишется.
+func TestSearchClientGoneIsSilent(t *testing.T) {
+	f, entered, observed := blockingSearcher(t)
+	s := newTestServer(t, nil, f)
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	ctx, gone := context.WithCancel(context.Background())
+	go func() { <-entered; gone() }()
+	rec, ok := serveAsync(t, s, ctx, "/api/corpus/search?q=habit", 3*time.Second)
+	if !ok {
+		t.Fatal("отмена клиента не дошла до поиска")
+	}
+	if rec.Body.Len() != 0 || logs.Len() != 0 {
+		t.Fatalf("тело %q, журнал %q: ожидалась тишина", rec.Body.String(), logs.String())
+	}
+	select {
+	case <-observed:
+	default:
+		t.Fatal("отмена не дошла до Run")
+	}
+}
+
+// Ошибка чтения конфига называет путь к файлу; в ответ он не идёт — только в журнал.
+func TestSearchBrokenConfigHidesPath(t *testing.T) {
+	s := newTestServer(t, nil, &recFinder{})
+	if err := os.WriteFile(s.Paths.Config, []byte("{не json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := do(t, s.Handler(), http.MethodGet, "/api/corpus/search?q=habit", "")
+	body := rec.Body.String()
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(body, "конфиг не прочитался") {
+		t.Fatalf("код %d, %q", rec.Code, body)
+	}
+	if strings.Contains(body, s.Paths.Config) || strings.Contains(body, filepath.Dir(s.Paths.Config)) {
+		t.Fatalf("путь к конфигу в ответе: %q", body)
 	}
 }
 

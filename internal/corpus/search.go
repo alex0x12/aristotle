@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Hit struct {
@@ -29,8 +30,20 @@ type Searcher struct {
 	Run        func(ctx context.Context, args ...string) ([]byte, error)
 }
 
+// qmdWaitDelay — сколько ждать после отмены контекста, прежде чем оборвать
+// каналы qmd силой. qmd — скрипт Node: по отмене убивается только он сам, а
+// потомки (npm, модель) живут и держат конец канала stdout, и без этого
+// предела Output() не вернулся бы, пока они не выйдут.
+const qmdWaitDelay = 5 * time.Second
+
 func RunQmd(ctx context.Context, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, "qmd", args...).Output()
+	return runCommand(ctx, "qmd", qmdWaitDelay, args...)
+}
+
+func runCommand(ctx context.Context, name string, waitDelay time.Duration, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = waitDelay
+	return cmd.Output()
 }
 
 // Search спрашивает qmd, дочитывает главы с диска и отсеивает неподлинное.

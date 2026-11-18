@@ -4,8 +4,10 @@ async function check(res) {
   return res;
 }
 
-export async function get(path) {
-  return (await check(await fetch(path))).json();
+// signal — необязательный AbortSignal: экран, которому ответ уже не нужен,
+// обрывает запрос, и тот не висит в ожидании сервера.
+export async function get(path, signal) {
+  return (await check(await fetch(path, { signal }))).json();
 }
 
 export async function send(method, path, body) {

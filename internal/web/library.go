@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/alex0x12/aristotle/internal/corpus"
@@ -265,6 +267,19 @@ type hitView struct {
 
 const maxQueryRunes = 300
 
+// defaultSearchTimeout — предел одного поиска. Холодный qmd поднимает локальную
+// модель десятки секунд, поэтому предел щедрый; но без него зависший qmd
+// (скажем, первый запуск, качающий модель на 1,2 ГБ) держал бы запрос,
+// горутину и процесс, пока страницу не закроют, а читатель смотрел бы на «ищу…».
+const defaultSearchTimeout = 90 * time.Second
+
+func (s *Server) searchDeadline() time.Duration {
+	if s.searchTimeout > 0 {
+		return s.searchTimeout
+	}
+	return defaultSearchTimeout
+}
+
 // groupRe — имя группы корпуса: строчные латинские слова через дефиса
 // («rhetoric-poetics»); начало с дефиса не проходит.
 var groupRe = regexp.MustCompile(`^[a-z]+(?:-[a-z]+)*$`)
@@ -305,13 +320,25 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, _, err := s.loadConfig()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Ошибка называет путь к файлу конфига; читателю он ни к чему.
+		log.Printf("поиск по корпусу: %v", err)
+		http.Error(w, "конфиг не прочитался", http.StatusInternalServerError)
 		return
 	}
-	hits, err := s.finder().Search(r.Context(), q, group, cfg.CorpusK)
+	ctx, cancel := context.WithTimeout(r.Context(), s.searchDeadline())
+	defer cancel()
+	hits, err := s.finder().Search(ctx, q, group, cfg.CorpusK)
 	if err != nil {
 		if r.Context().Err() != nil {
-			return // читатель ушёл со страницы; отвечать некому
+			return // читатель ушёл со страницы; отвечать некому, ошибкой это не считается
+		}
+		// Срок смотрим по контексту, а не по тексту ошибки: убитый по сроку
+		// процесс отдаёт «signal: killed», а не context.DeadlineExceeded.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			log.Printf("поиск по корпусу не уложился в %v", s.searchDeadline())
+			// 504, а не 502: qmd не ответил ошибкой, а промолчал до срока.
+			http.Error(w, "поиск не уложился во время", http.StatusGatewayTimeout)
+			return
 		}
 		// Подробности (путь корня, вывод qmd) — в журнал сервера, а не читателю.
 		log.Printf("поиск по корпусу: %v", err)

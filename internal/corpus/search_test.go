@@ -3,10 +3,12 @@ package corpus
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeChapter(t *testing.T, root, rel, authenticity, group, cite string) {
@@ -273,5 +275,25 @@ func TestSearchAllParsedButFilteredIsEmptyNotError(t *testing.T) {
 	}
 	if len(hits) != 0 {
 		t.Fatalf("получено %d попаданий, ожидалось 0", len(hits))
+	}
+}
+
+// TestRunCommandDoesNotWaitForPipeHoldingChildren: qmd — скрипт Node, и по
+// отмене контекста убивается только он сам, а потомки (модель, npm) живут и
+// держат конец канала stdout, так что Output() не вернулся бы, пока они не
+// выйдут. WaitDelay обрывает ожидание. Здесь «потомок» — sleep, внук sh.
+func TestRunCommandDoesNotWaitForPipeHoldingChildren(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("нет sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := runCommand(ctx, "sh", 200*time.Millisecond, "-c", "sleep 4 & wait")
+	if err == nil {
+		t.Fatal("убитая по сроку команда не может завершиться успешно")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Output() ждал потомка %v: WaitDelay не действует", d)
 	}
 }

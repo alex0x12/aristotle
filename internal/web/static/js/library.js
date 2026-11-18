@@ -30,6 +30,7 @@ let live = null;
 
 export async function showLibrary(center, path) {
   if (live && center.contains(live.root)) return live.show(path);
+  live?.cancel(); // прежний экран ушёл из центра: его запрос больше никому не нужен
 
   center.innerHTML = `<div class="library">
     <div class="mosaic"></div>
@@ -49,6 +50,17 @@ export async function showLibrary(center, path) {
   let cur = '';   // открытая глава
   let found = null; // последний удачный поиск: { q, hits }
   let seq = 0;    // ответ устаревшего запроса не должен затирать новый
+  let ctl = null; // обрыв запроса, который идёт сейчас
+
+  // begin — начало нового запроса справа. Прежний, если ещё идёт, обрывается, и
+  // кнопка поиска отпускается тут же: её включение не должно зависеть от того,
+  // придёт ли когда-нибудь ответ на запрос, который уже никому не нужен.
+  const begin = () => {
+    ctl?.abort();
+    ctl = new AbortController();
+    submit.disabled = false;
+    return { my: ++seq, signal: ctl.signal };
+  };
 
   // mark — подсветить главу в оглавлении и раскрыть её работу.
   const mark = p => {
@@ -75,11 +87,11 @@ export async function showLibrary(center, path) {
   };
 
   const open = async p => {
-    const my = ++seq;
+    const { my, signal } = begin();
     mark(p);
     hint('загружаю главу…');
     try {
-      const ch = await get('/api/corpus/chapter?path=' + encodeURIComponent(p));
+      const ch = await get('/api/corpus/chapter?path=' + encodeURIComponent(p), signal);
       if (my !== seq) return;
       // translator и book у сервера бывают пустыми; text читаем так же, как sources.js.
       reader.innerHTML = `<h2>${esc(ch.cite)}</h2>
@@ -87,6 +99,7 @@ export async function showLibrary(center, path) {
         ${paragraphs(ch.text ?? '')}`;
       reader.scrollTop = 0;
     } catch (e) {
+      if (e.name === 'AbortError') return;
       if (my === seq) fail('глава не открылась: ' + reason(e));
     }
   };
@@ -96,28 +109,31 @@ export async function showLibrary(center, path) {
   const show = p => {
     cur = p ?? '';
     if (cur) return open(cur);
-    ++seq;
+    begin();
     mark('');
     if (found) showHits(found); else hint('Выберите сочинение слева или найдите место поиском.');
   };
-  live = { root, show };
+  live = { root, show, cancel: () => ctl?.abort() };
 
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const q = input.value.trim();
     if (!q) return;
-    const my = ++seq;
+    const { my, signal } = begin();
     submit.disabled = true;
     hint(`ищу «${q}»… холодный поиск поднимается до 15 секунд`);
     try {
-      const hits = await get('/api/corpus/search?q=' + encodeURIComponent(q));
+      const hits = await get('/api/corpus/search?q=' + encodeURIComponent(q), signal);
       if (my !== seq) return;
       found = { q, hits: hits ?? [] };
       showHits(found);
     } catch (err) {
+      if (err.name === 'AbortError') return;
       if (my === seq) fail(reason(err));
     } finally {
-      submit.disabled = false;
+      // Только свой запрос: вытесненный уже отпущен в begin(), а включить кнопку
+      // здесь значило бы разблокировать её посреди чужого поиска.
+      if (my === seq) submit.disabled = false;
     }
   });
 
