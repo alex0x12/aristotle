@@ -59,7 +59,6 @@ type convSummary struct {
 	Title   string    `json:"title"`
 	Updated time.Time `json:"updated"`
 	Tokens  int       `json:"tokens"`
-	CostUSD *float64  `json:"cost_usd"`
 }
 
 func summarize(id string, recs []chat.Record) convSummary {
@@ -67,8 +66,6 @@ func summarize(id string, recs []chat.Record) convSummary {
 	if sum.Title == "" {
 		sum.Title = "Новая беседа"
 	}
-	var cost float64
-	priced := false
 	for _, r := range recs {
 		if r.Time.After(sum.Updated) {
 			sum.Updated = r.Time
@@ -79,13 +76,6 @@ func summarize(id string, recs []chat.Record) convSummary {
 		if r.Usage != nil && r.Usage.Known {
 			sum.Tokens += r.Usage.Total()
 		}
-		if r.CostUSD != nil {
-			cost += *r.CostUSD
-			priced = true
-		}
-	}
-	if priced {
-		sum.CostUSD = &cost
 	}
 	return sum
 }
@@ -95,8 +85,6 @@ type item struct {
 	Text          string          `json:"text,omitempty"`
 	Blocks        []blockView     `json:"blocks,omitempty"`
 	Usage         *provider.Usage `json:"usage,omitempty"`
-	CostUSD       *float64        `json:"cost_usd,omitempty"`
-	Profile       string          `json:"profile,omitempty"`
 	Model         string          `json:"model,omitempty"`
 	StopReason    string          `json:"stop_reason,omitempty"`
 	QuotesUnknown bool            `json:"quotes_unknown,omitempty"`
@@ -147,7 +135,7 @@ func items(recs []chat.Record) []item {
 		case "assistant":
 			blocks, unknown := blocksOf(r)
 			out = append(out, item{Type: "assistant", Text: r.Text, Blocks: blocksForWire(blocks),
-				Usage: r.Usage, CostUSD: r.CostUSD, Profile: r.Profile, Model: r.Model,
+				Usage: r.Usage, Model: r.Model,
 				StopReason: r.StopReason, QuotesUnknown: unknown && r.Quotes == nil})
 		case chat.RoleTrim:
 			out = append(out, item{Type: "trim", Excerpts: r.Excerpts, Turns: r.Turns})
@@ -202,7 +190,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"id": c.id, "title": sum.Title, "items": its,
-		"context_used": c.lastPrompt.Load(), "tokens": sum.Tokens, "cost_usd": sum.CostUSD,
+		"context_used": c.lastPrompt.Load(), "tokens": sum.Tokens,
 	})
 }
 

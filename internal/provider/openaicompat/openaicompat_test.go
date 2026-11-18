@@ -2,8 +2,13 @@ package openaicompat
 
 import (
 	"bufio"
+	"context"
+	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/alex0x12/aristotle/internal/provider"
@@ -44,71 +49,30 @@ func TestAccumulatorSkipsBrokenJSON(t *testing.T) {
 	}
 }
 
-func TestReasoningProfileRenamesMaxTokens(t *testing.T) {
-	body := buildBody("deepseek-reasoner", true, 0, provider.Request{
+// Настраиваемы только адрес, модель и ключ: потолка вывода, температуры и
+// усилия рассуждения в запросе нет (ни под какими из прежних имён).
+func TestBodyHasNoTuningKnobs(t *testing.T) {
+	body := buildBody("deepseek-flash", provider.Request{
 		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
 	})
-	if _, ok := body["max_tokens"]; ok {
-		t.Error("у рассуждающей модели max_tokens не принимается")
+	for _, key := range []string{"max_tokens", "max_completion_tokens", "temperature", "reasoning_effort", "reasoning", "top_p"} {
+		if _, ok := body[key]; ok {
+			t.Errorf("в теле запроса есть %q", key)
+		}
 	}
-	if _, ok := body["max_completion_tokens"]; !ok {
-		t.Error("нет max_completion_tokens")
-	}
-	if _, ok := body["temperature"]; ok {
-		t.Error("temperature у рассуждающей модели не принимается")
-	}
-}
-
-func TestPlainProfileUsesMaxTokens(t *testing.T) {
-	body := buildBody("deepseek-chat", false, 0, provider.Request{
-		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
-	})
-	if _, ok := body["max_tokens"]; !ok {
-		t.Error("нет max_tokens")
+	if body["model"] != "deepseek-flash" || body["stream"] != true {
+		t.Fatalf("тело: %+v", body)
 	}
 }
 
 func TestSystemGoesFirstAsMessage(t *testing.T) {
-	body := buildBody("gpt-5.1", false, 0, provider.Request{
+	body := buildBody("gpt-5.1", provider.Request{
 		System:   "ты Аристотель",
 		Messages: []provider.Message{{Role: provider.RoleUser, Text: "привет"}},
 	})
 	msgs := body["messages"].([]map[string]any)
 	if msgs[0]["role"] != "system" || msgs[0]["content"] != "ты Аристотель" {
 		t.Fatalf("первое сообщение: %+v", msgs[0])
-	}
-}
-
-// TestProfileMaxTokensOverridesDefault закрывает дефект №7 итогового ревью:
-// DefaultMaxTokens=64000 — факт про Anthropic, не про всех провайдеров.
-// Профиль с меньшим потолком вывода (например, openrouter, направленный на
-// не-Anthropic модель) обязан передать именно свой потолок, а не умолчание,
-// иначе каждый запрос отвечает четырёхсотой ошибкой.
-func TestProfileMaxTokensOverridesDefault(t *testing.T) {
-	body := buildBody("some-model", false, 4096, provider.Request{
-		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
-	})
-	if got := body["max_tokens"]; got != 4096 {
-		t.Fatalf("max_tokens = %v, ожидалось 4096 (потолок профиля)", got)
-	}
-}
-
-func TestProfileMaxTokensOverridesDefaultForReasoning(t *testing.T) {
-	body := buildBody("some-reasoning-model", true, 4096, provider.Request{
-		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
-	})
-	if got := body["max_completion_tokens"]; got != 4096 {
-		t.Fatalf("max_completion_tokens = %v, ожидалось 4096 (потолок профиля)", got)
-	}
-}
-
-func TestRequestMaxTokensOverridesProfile(t *testing.T) {
-	body := buildBody("some-model", false, 4096, provider.Request{
-		MaxTokens: 500,
-		Messages:  []provider.Message{{Role: provider.RoleUser, Text: "х"}},
-	})
-	if got := body["max_tokens"]; got != 500 {
-		t.Fatalf("max_tokens = %v, ожидалось 500 (явный per-запросный побеждает потолок профиля)", got)
 	}
 }
 
@@ -171,7 +135,7 @@ func TestUsageMissingIsUnknown(t *testing.T) {
 }
 
 func TestBodyAsksForUsage(t *testing.T) {
-	body := buildBody("deepseek-v4-pro", false, 0, provider.Request{
+	body := buildBody("deepseek-v4-pro", provider.Request{
 		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
 	})
 	opts, ok := body["stream_options"].(map[string]any)
@@ -180,19 +144,93 @@ func TestBodyAsksForUsage(t *testing.T) {
 	}
 }
 
-func TestTuneEffortOnlyForReasoning(t *testing.T) {
-	body := map[string]any{}
-	temp := 0.5
-	tune(body, true, "high", &temp)
-	if body["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %v", body["reasoning_effort"])
+// serve поднимает фальшивый провайдер: запоминает запрос, отдаёт заданный
+// ответ. В сеть дальше loopback ничего не уходит.
+func serve(t *testing.T, status int, body string) (url string, got func() (*http.Request, []byte)) {
+	t.Helper()
+	var mu sync.Mutex
+	var last *http.Request
+	var lastBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		last, lastBody = r, b
+		mu.Unlock()
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, func() (*http.Request, []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		return last, lastBody
 	}
-	if _, ok := body["temperature"]; ok {
-		t.Fatal("рассуждающая модель temperature не принимает")
+}
+
+func TestStreamSendsConfiguredModelKeyAndAddress(t *testing.T) {
+	url, got := serve(t, 200, deepseekStream)
+	// Хвостовой слэш адреса не должен давать «//chat/completions».
+	p := New(url+"/", "my-model", "FAKE-KEY-0000")
+	st, err := p.Stream(context.Background(), provider.Request{
+		System:   "ты Аристотель",
+		Messages: []provider.Message{{Role: provider.RoleUser, Text: "привет"}},
+		Tools:    []provider.ToolDef{provider.SearchCorpusTool()},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	plain := map[string]any{}
-	tune(plain, false, "high", &temp)
-	if _, ok := plain["reasoning_effort"]; ok || plain["temperature"] != 0.5 {
-		t.Fatalf("обычная модель: %v", plain)
+	var text strings.Builder
+	var usage provider.Usage
+	for st.Next() {
+		switch ev := st.Event(); ev.Kind {
+		case provider.EventText:
+			text.WriteString(ev.Text)
+		case provider.EventUsage:
+			usage = ev.Usage
+		}
+	}
+	st.Close()
+	if text.String() != "Да." || !usage.Known {
+		t.Fatalf("текст %q, расход %+v", text.String(), usage)
+	}
+	req, body := got()
+	if req.Method != "POST" || req.URL.Path != "/chat/completions" {
+		t.Fatalf("запрос %s %s", req.Method, req.URL.Path)
+	}
+	if h := req.Header.Get("Authorization"); h != "Bearer FAKE-KEY-0000" {
+		t.Fatalf("Authorization = %q", h)
+	}
+	if req.Header.Get("X-Api-Key") != "" {
+		t.Fatal("лишний заголовок с ключом")
+	}
+	var sent map[string]any
+	if err := json.Unmarshal(body, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent["model"] != "my-model" {
+		t.Fatalf("model = %v", sent["model"])
+	}
+	for _, key := range []string{"max_tokens", "max_completion_tokens", "temperature", "reasoning_effort"} {
+		if _, ok := sent[key]; ok {
+			t.Errorf("в запросе есть %q", key)
+		}
+	}
+}
+
+// Отказ провайдера доходит до пользователя, но ключ из него вычищен: некоторые
+// провайдеры повторяют присланный ключ в тексте ошибки.
+func TestStreamErrorDoesNotRepeatKey(t *testing.T) {
+	url, _ := serve(t, 401, `{"error":"Incorrect API key provided: FAKE-KEY-0000 is invalid"}`)
+	_, err := New(url, "m", "FAKE-KEY-0000").Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
+	})
+	if err == nil {
+		t.Fatal("ожидалась ошибка")
+	}
+	if strings.Contains(err.Error(), "FAKE-KEY-0000") {
+		t.Fatalf("ошибка повторяет ключ: %v", err)
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Fatalf("ошибка потеряла статус: %v", err)
 	}
 }

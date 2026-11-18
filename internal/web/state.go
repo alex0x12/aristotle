@@ -4,132 +4,73 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
-	"github.com/alex0x12/aristotle/internal/app"
-	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/keys"
 )
 
-// keyView — всё, что интерфейс знает о ключе. Самого ключа здесь нет.
+// keyView — всё, что интерфейс знает о ключе. Самого ключа здесь нет: только
+// есть ли он и его последние четыре знака.
 type keyView struct {
-	Source string `json:"source"` // env, file, none
-	Hint   string `json:"hint,omitempty"`
+	Set  bool   `json:"set"`
+	Hint string `json:"hint,omitempty"`
 	// Warning — почему ключ не удалось прочитать; пока только испорченный
-	// keys.json. Ни пути, ни содержимого файла в нём нет.
+	// keys.json (тогда Set = false). Ни пути, ни содержимого файла в нём нет.
 	Warning string `json:"warning,omitempty"`
 }
 
-// keysUnreadableText — предупреждение вместо профиля, чей ключ лежал бы в
-// испорченном keys.json, и начало отказа на запись в него.
-const keysUnreadableText = "keys.json не читается"
+// keysUnreadableText — предупреждение вместо ключа, лежащего в испорченном
+// keys.json, и начало отказа на запись в него.
+const keysUnreadableText = keys.UnreadableText
 
-// keysUnreadableError — keys.json есть, но не разбирается (или не читается).
-// Настоящая ошибка store.Get несёт путь к файлу и кусок его содержимого, поэтому
-// Error() отдаёт только фиксированный текст — он и уходит в ответы; настоящая
-// доступна через Unwrap для журнала сервера.
-type keysUnreadableError struct{ cause error }
-
-func (e *keysUnreadableError) Error() string { return keysUnreadableText }
-func (e *keysUnreadableError) Unwrap() error { return e.cause }
-
-// isKeysUnreadable — ошибка из resolve про испорченный keys.json, а не про
-// профиль; сама ошибка (для журнала) вторым результатом.
-func isKeysUnreadable(err error) (*keysUnreadableError, bool) {
-	var ke *keysUnreadableError
-	return ke, errors.As(err, &ke)
+// readKey — ключ из keys.json. Испорченный файл — *keys.UnreadableError; его
+// причина (с путём, без содержимого) уходит в журнал сервера один раз.
+func (s *Server) readKey() (string, error) {
+	key, err := s.keyStore().Get()
+	if err != nil {
+		s.logKeysUnreadable(err)
+		return "", err
+	}
+	s.cfgLogMu.Lock()
+	s.lastKeysErr = ""
+	s.cfgLogMu.Unlock()
+	return key, nil
 }
 
-type profileView struct {
-	Name            string         `json:"name"`
-	Builtin         bool           `json:"builtin"`
-	Kind            string         `json:"kind"`
-	BaseURL         string         `json:"base_url"`
-	Model           string         `json:"model"`
-	KeyEnv          string         `json:"key_env"`
-	Reasoning       bool           `json:"reasoning"`
-	ReasoningEffort string         `json:"reasoning_effort"`
-	Temperature     *float64       `json:"temperature"`
-	MaxOutputTokens int            `json:"max_output_tokens"`
-	ContextBudget   int            `json:"context_budget"`
-	Prices          *config.Prices `json:"prices"`
-	Key             keyView        `json:"key"`
+// keyState — состояние ключа для экрана. Испорченный keys.json не роняет
+// ответ: экран настроек, где его чинят, должен открыться.
+func (s *Server) keyState() keyView {
+	key, err := s.readKey()
+	var ue *keys.UnreadableError
+	switch {
+	case errors.As(err, &ue):
+		return keyView{Warning: keysUnreadableText}
+	case err != nil:
+		return keyView{Warning: "ключ не прочитать"}
+	case key == "":
+		return keyView{}
+	}
+	return keyView{Set: true, Hint: keys.Hint(key)}
 }
 
-func viewOf(p config.Profile) profileView {
-	_, builtin := config.Builtin().Profiles[p.Name]
-	v := profileView{
-		Name: p.Name, Builtin: builtin, Kind: p.Kind, BaseURL: p.BaseURL, Model: p.Model,
-		KeyEnv: p.KeyEnv, Reasoning: p.Reasoning, ReasoningEffort: p.ReasoningEffort,
-		Temperature: p.Temperature, MaxOutputTokens: p.MaxOutputTokens,
-		ContextBudget: p.ContextBudget, Prices: p.Prices,
-	}
-	switch app.KeySource(p) {
-	case "env":
-		// Resolve при заданной переменной файл не читает и p.Key оставляет
-		// пустым: подсказка берётся из самой переменной.
-		v.Key = keyView{Source: "env", Hint: keys.Hint(os.Getenv(p.KeyEnv))}
-	case "file":
-		v.Key = keyView{Source: "file", Hint: keys.Hint(p.Key)}
-	default:
-		v.Key = keyView{Source: "none"}
-	}
-	return v
-}
-
-// resolve — профиль с ключом из keys.json. Ошибку чтения файла заменяет на
-// *keysUnreadableError; вместе с ней возвращается профиль без ключа, чтобы
-// вызывающему было что показать. Профиль, которого нет или у которого неверный
-// kind, — другая ошибка, она проходит как есть. В журнал resolve не пишет:
-// профилей много, а причина одна, и вызывающий запишет её один раз.
-func (s *Server) resolve(cfg config.Config, store keys.Store, name string) (config.Profile, error) {
-	p, err := app.Resolve(cfg, store, name)
-	if err == nil {
-		return p, nil
-	}
-	raw, cerr := cfg.Resolve(name)
-	if cerr != nil {
-		raw = cfg.Profiles[name]
-		raw.Name = name
-		return raw, cerr
-	}
-	return raw, &keysUnreadableError{cause: err}
-}
-
-// profiles — все профили с ключами из keys.json, по имени. Испорченный
-// keys.json не роняет ответ: экран настроек, где его чинят, должен открыться.
-// Профили, чей ключ в окружении, показываются как обычно (файл им не нужен), а
-// остальные — без ключа и с предупреждением. Так же не роняет ответ и испорченный
-// config.json: тогда профили встроенные, а degraded = true (см. loadConfig).
-func (s *Server) profiles() (cfg config.Config, views []profileView, degraded bool) {
-	cfg, store, degraded := s.loadConfig()
-	logged := false
-	for _, name := range app.ProfileNames(cfg) {
-		p, err := s.resolve(cfg, store, name)
-		v := viewOf(p)
-		if ke, ok := isKeysUnreadable(err); ok {
-			v.Key = keyView{Source: "none", Warning: keysUnreadableText}
-			if !logged { // в журнале сервера путь есть, в ответе — нет
-				logged = true
-				log.Printf("keys.json: %v", ke.cause)
-			}
-		}
-		views = append(views, v)
-	}
-	return cfg, views, degraded
-}
-
-func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	cfg, views, degraded := s.profiles()
-	// Итог месяца для шапки. Журналы, которые не прочитались, итог не
-	// ломают: шапка не должна терять профили из-за расхода.
+// monthTotal — итог месяца для шапки.
+func monthTotal(dir string) usageTotal {
+	// Журналы, которые не прочитались, итог не ломают: шапка не должна
+	// пропадать из-за расхода.
 	from, to := monthBounds(time.Now())
-	_, month, err := aggregate(s.Paths.History, from, to)
+	_, month, err := aggregate(dir, from, to)
 	if err != nil {
 		log.Printf("расход за месяц: %v", err)
 	}
-	out := map[string]any{"default": cfg.Default, "corpus_k": cfg.CorpusK, "profiles": views, "month": month}
+	return month
+}
+
+func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
+	cfg, degraded := s.loadConfig()
+	out := map[string]any{
+		"model": cfg.Model, "base_url": cfg.BaseURL, "context_budget": cfg.ContextBudget,
+		"key": s.keyState(), "month": monthTotal(s.Paths.History),
+	}
 	if degraded { // у здорового конфига этих полей нет вовсе
 		out["degraded"], out["warning"] = true, configUnreadableText
 	}

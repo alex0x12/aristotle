@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,19 +14,40 @@ import (
 
 	"github.com/alex0x12/aristotle/internal/app"
 	"github.com/alex0x12/aristotle/internal/chat"
-	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/keys"
 	"github.com/alex0x12/aristotle/internal/persona"
+	"github.com/alex0x12/aristotle/internal/provider"
 	"github.com/alex0x12/aristotle/internal/render"
 )
 
+const usage = `использование:
+  aristotle [флаги]       беседа в терминале
+  aristotle web [флаги]   веб-интерфейс (aristotle web -h)
+  aristotle key           сохранить ключ API (aristotle key -h)
+
+Модель одна: адрес API, название модели и бюджет контекста — в
+~/.config/aristotle/config.json или в «Настройках» веб-интерфейса, ключ — в
+~/.config/aristotle/keys.json (команда aristotle key). Переменные окружения
+для ключа не читаются.
+
+флаги беседы:
+`
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "web" {
-		os.Exit(runWeb(os.Args[2:]))
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "web":
+			os.Exit(runWeb(os.Args[2:]))
+		case "key":
+			os.Exit(runKeyCLI(os.Args[2:]))
+		}
+	}
+	flag.Usage = func() {
+		fmt.Fprint(flag.CommandLine.Output(), usage)
+		flag.PrintDefaults()
 	}
 	root := flag.String("root", ".", "корень репозитория (persona/ и corpus/)")
-	modelName := flag.String("model", "", "профиль провайдера")
 	resume := flag.String("resume", "", "продолжить беседу из файла истории")
 	evalPath := flag.String("eval", "", "прогнать вопросы из файла и выйти")
 	recallOnly := flag.Bool("recall-only", false,
@@ -36,21 +59,29 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	cfg, err := config.Load(paths.Config)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "конфиг:", err)
-		os.Exit(1)
+	conn, cfgErr, keyErr := app.LoadConnection(paths)
+	if cfgErr != nil {
+		// Не отказ: беседа идёт на умолчаниях, но молча подменять настройки нельзя.
+		fmt.Fprintf(os.Stderr, "предупреждение: config.json не читается: %v — беру умолчания\n", cfgErr)
 	}
-	store := keys.Store{Path: paths.Keys}
-	profile, err := app.Resolve(cfg, store, *modelName)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	prov, err := app.NewProvider(profile)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	// recall-only модель не зовёт, и ключ ему не нужен: он работает и без
+	// ключа, и с испорченным keys.json.
+	needModel := !(*evalPath != "" && *recallOnly)
+	var prov provider.Provider
+	if needModel {
+		if keyErr != nil {
+			var ue *keys.UnreadableError
+			if errors.As(keyErr, &ue) {
+				fmt.Fprintf(os.Stderr, "%s (%s): исправьте файл или удалите его вручную\n", keys.UnreadableText, paths.Keys)
+			} else {
+				fmt.Fprintln(os.Stderr, keyErr)
+			}
+			os.Exit(1)
+		}
+		if prov, err = app.NewProvider(conn); err != nil { // нет ключа — app.ErrNoKey
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 	system, err := persona.Load(filepath.Join(*root, "persona"))
 	if err != nil {
@@ -66,7 +97,7 @@ func main() {
 
 	searcher := app.NewSearcher(*root)
 	session := &chat.Session{Provider: prov, Corpus: searcher, System: system,
-		Budget: profile.ContextBudget, DefaultK: cfg.CorpusK,
+		Budget: conn.ContextBudget,
 		OnSearchWarning: func(msg string) {
 			fmt.Fprintln(os.Stderr, "предупреждение:", msg)
 		},
@@ -82,8 +113,7 @@ func main() {
 	}
 	printer := &render.Printer{Out: os.Stdout, Color: true}
 
-	fmt.Printf("Аристотель. Профиль %s (%s). /src, /model, /again, /quit.\n",
-		profile.Name, profile.Model)
+	fmt.Printf("Аристотель. Модель %s (%s). /src, /again, /quit.\n", conn.Model, hostOf(conn.BaseURL))
 	fmt.Println("История:", historyPath)
 
 	if *resume != "" {
@@ -126,23 +156,6 @@ func main() {
 		switch fields[0] {
 		case "/quit":
 			return
-
-		case "/model":
-			if len(fields) < 2 {
-				fmt.Printf("текущий профиль: %s (%s)\n", profile.Name, profile.Model)
-				fmt.Println("доступные профили:", strings.Join(app.ProfileNames(cfg), ", "))
-				continue
-			}
-			newProfile, newProv, err := app.SwitchProfile(cfg, store, fields[1])
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "ошибка:", err)
-				continue
-			}
-			profile, prov = newProfile, newProv
-			session.Provider = prov
-			session.Budget = profile.ContextBudget
-			fmt.Printf("профиль переключён: %s (%s)\n", profile.Name, profile.Model)
-			continue
 
 		case "/src":
 			src := printer.Sources()
@@ -205,8 +218,7 @@ func main() {
 		}
 		usage := res.Usage
 		appendHistory(chat.Record{Role: "assistant", Text: res.Text,
-			Profile: profile.Name, Model: profile.Model,
-			Usage: &usage, CostUSD: app.Cost(profile.Prices, usage),
+			Model: conn.Model, Usage: &usage,
 			Quotes: app.QuotesOf(blocks), StopReason: "end"})
 		fmt.Fprintln(os.Stderr, app.UsageLine(res.Usage))
 		if res.Trim.Any() {
@@ -217,4 +229,13 @@ func main() {
 			fmt.Fprintln(os.Stderr, "[контекст: бюджет превышен и после урезания — запрос отправлен в урезанном виде]")
 		}
 	}
+}
+
+// hostOf — хост адреса API для баннера: путь и параметры адреса показывать
+// незачем.
+func hostOf(baseURL string) string {
+	if u, err := url.Parse(baseURL); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return baseURL
 }

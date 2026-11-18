@@ -5,6 +5,7 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -39,7 +40,7 @@ type Server struct {
 	Port  int // для проверки Host и Origin
 
 	// Подмены для тестов; nil и пусто — настоящие.
-	NewProvider func(config.Profile) (provider.Provider, error)
+	NewProvider func(app.Connection) (provider.Provider, error)
 	Finder      chat.Finder
 	System      string
 	HTTPClient  *http.Client
@@ -52,19 +53,20 @@ type Server struct {
 	// Часы для имени копии испорченного config.json; nil — time.Now.
 	clock func() time.Time
 
-	// keysMu стоит над каждой записью keys.json (замена, удаление, чистка после
-	// убранного профиля): keys.Store замка не имеет, а запись — это чтение всего
-	// файла и замена целиком.
+	// keysMu стоит над каждой записью keys.json (замена и удаление): keys.Store
+	// замка не имеет, а запись — это проверка прежнего файла и замена целиком.
 	keysMu sync.Mutex
 
 	// cfgMu держит сохранение настроек целиком: проверка, копия испорченного
 	// файла и запись. Два сохранения подряд не должны оба увидеть повреждённый
 	// файл и сделать две копии одного имени.
 	cfgMu sync.Mutex
-	// lastCfgErr — последняя записанная в журнал ошибка config.json: страница
-	// спрашивает состояние часто, и одна и та же строка повторялась бы каждый раз.
-	cfgLogMu   sync.Mutex
-	lastCfgErr string
+	// lastCfgErr и lastKeysErr — последние записанные в журнал ошибки config.json
+	// и keys.json: страница спрашивает состояние часто, и одна и та же строка
+	// повторялась бы каждый раз.
+	cfgLogMu    sync.Mutex
+	lastCfgErr  string
+	lastKeysErr string
 
 	mu    sync.Mutex
 	convs map[string]*conv
@@ -125,9 +127,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/corpus/search", s.handleSearch)
 	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	mux.HandleFunc("PUT /api/settings", s.handlePutSettings)
-	mux.HandleFunc("PUT /api/keys/{profile}", s.handlePutKey)
-	mux.HandleFunc("DELETE /api/keys/{profile}", s.handleDeleteKey)
-	mux.HandleFunc("POST /api/keys/{profile}/check", s.handleCheckKey)
+	mux.HandleFunc("PUT /api/key", s.handlePutKey)
+	mux.HandleFunc("DELETE /api/key", s.handleDeleteKey)
+	mux.HandleFunc("POST /api/key/check", s.handleCheckKey)
 	mux.HandleFunc("GET /api/usage", s.handleUsage)
 	mux.HandleFunc("GET /api/conversations/{id}/export.md", s.handleExport)
 }
@@ -182,30 +184,49 @@ func readJSON(r *http.Request, v any) error {
 }
 
 // configUnreadableText — предупреждение интерфейсу, когда config.json не
-// читается. Ни пути, ни текста разбора в нём нет.
+// читается (в том числе когда он старого формата с профилями). Ни пути, ни
+// текста разбора в нём нет.
 const configUnreadableText = "config.json не читается — исправьте файл или сохраните настройки заново (будет перезаписан)"
 
 // loadConfig читает конфиг с диска на каждый запрос: файл маленький, а
 // правка из настроек видна сразу, без перезапуска. Ошибки не возвращает:
-// если config.json не читается (его правят руками), берётся встроенный конфиг и
-// degraded = true — интерфейс с беседами и диалогом остаётся рабочим, ключи
-// окружения действуют как прежде, а экран настроек показывает встроенные
-// профили и предупреждение. Причина (с путём) идёт в журнал сервера, один раз
-// на каждую новую ошибку; в ответы она не попадает.
-func (s *Server) loadConfig() (cfg config.Config, store keys.Store, degraded bool) {
-	store = keys.Store{Path: s.Paths.Keys}
+// если config.json не читается (его правят руками или он остался от версии с
+// профилями), берутся умолчания и degraded = true — интерфейс с беседами и
+// диалогом остаётся рабочим, а экран настроек показывает умолчания и
+// предупреждение. Причина (с путём) идёт в журнал сервера, один раз на каждую
+// новую ошибку; в ответы она не попадает.
+func (s *Server) loadConfig() (cfg config.Config, degraded bool) {
 	cfg, err := config.Load(s.Paths.Config)
 	s.cfgLogMu.Lock()
 	defer s.cfgLogMu.Unlock()
 	if err == nil {
 		s.lastCfgErr = ""
-		return cfg, store, false
+		return cfg, false
 	}
 	if msg := err.Error(); msg != s.lastCfgErr {
 		s.lastCfgErr = msg
-		log.Printf("%v (работаем со встроенными профилями)", err)
+		log.Printf("%v (работаем с умолчаниями)", err)
 	}
-	return config.Builtin(), store, true
+	return config.Default(), true
+}
+
+// keyStore — единственное хранилище ключа.
+func (s *Server) keyStore() keys.Store { return keys.Store{Path: s.Paths.Keys} }
+
+// logKeysUnreadable пишет в журнал сервера причину (с путём, но без содержимого
+// файла), один раз на каждую новую.
+func (s *Server) logKeysUnreadable(err error) {
+	var ue *keys.UnreadableError
+	if !errors.As(err, &ue) {
+		return
+	}
+	msg := ue.Unwrap().Error()
+	s.cfgLogMu.Lock()
+	defer s.cfgLogMu.Unlock()
+	if msg != s.lastKeysErr {
+		s.lastKeysErr = msg
+		log.Printf("keys.json: %v", ue.Unwrap())
+	}
 }
 
 // utcNow — текущее время; в тестах подменяется Server.clock.

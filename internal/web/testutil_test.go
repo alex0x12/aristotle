@@ -13,7 +13,6 @@ import (
 
 	"github.com/alex0x12/aristotle/internal/app"
 	"github.com/alex0x12/aristotle/internal/chat"
-	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
@@ -57,24 +56,18 @@ func (f fakeFinder) Search(context.Context, string, string, int) ([]corpus.Hit, 
 	return f.hits, nil
 }
 
-// isolateKeyEnv обнуляет переменные окружения с ключами всех встроенных
-// профилей: тест не должен ни зависеть от настоящих ключей разработчика, ни
-// выводить их (подсказка ключа попадает в /api/state). Список берётся из
-// config.Builtin, чтобы новый профиль не остался в стороне.
-func isolateKeyEnv(t *testing.T) {
-	t.Helper()
-	for _, p := range config.Builtin().Profiles {
-		t.Setenv(p.KeyEnv, "")
-	}
-}
+// testKey — ключ, который newTestServer кладёт в keys.json: заведомо
+// выдуманный и узнаваемый, чтобы тесты на утечку искали именно его.
+const testKey = "FAKE-TESTKEY-w9Q2-x7Lm-4f1d"
 
-// newTestServer — сервер на временных каталогах, с подменённым провайдером
-// и поиском; порт 8337 — для проверки Host и Origin. Окружение с ключами
-// обнулено; тесту, которому нужен ключ в окружении, достаточно t.Setenv
-// после вызова.
+// newTestServer — сервер на временных каталогах, с подменённым провайдером и
+// поиском; порт 8337 — для проверки Host и Origin. В keys.json лежит testKey:
+// ход без ключа сервер отвергает сам, до провайдера, поэтому тестам с ходом он
+// нужен; тесту без ключа достаточно noKey. Переменные окружения сервер не читает
+// вовсе (это проверяет TestEnvironmentKeysAreIgnored), так что изолировать их не
+// нужно.
 func newTestServer(t *testing.T, prov provider.Provider, finder chat.Finder) *Server {
 	t.Helper()
-	isolateKeyEnv(t)
 	home := t.TempDir()
 	s := New(t.TempDir(), app.Paths{
 		Config:  filepath.Join(home, "config.json"),
@@ -82,9 +75,20 @@ func newTestServer(t *testing.T, prov provider.Provider, finder chat.Finder) *Se
 		History: filepath.Join(home, "history"),
 	}, 8337)
 	s.System = "ты Аристотель"
-	s.NewProvider = func(config.Profile) (provider.Provider, error) { return prov, nil }
+	s.NewProvider = func(app.Connection) (provider.Provider, error) { return prov, nil }
 	s.Finder = finder
+	if err := s.keyStore().Set(testKey); err != nil {
+		t.Fatal(err)
+	}
 	return s
+}
+
+// noKey убирает ключ из keys.json.
+func noKey(t *testing.T, s *Server) {
+	t.Helper()
+	if err := s.keyStore().Delete(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // do — запрос так, как его шлёт браузер со страницы интерфейса.

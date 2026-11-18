@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
 )
 
@@ -327,10 +328,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
-	cfg, _, _ := s.loadConfig() // из конфига нужен только k; испорченный — встроенный
 	ctx, cancel := context.WithTimeout(r.Context(), s.searchDeadline())
 	defer cancel()
-	hits, err := s.finder().Search(ctx, q, group, cfg.CorpusK)
+	hits, err := s.finder().Search(ctx, q, group, config.DefaultCorpusK)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return // читатель ушёл со страницы; отвечать некому, ошибкой это не считается

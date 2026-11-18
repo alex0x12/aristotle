@@ -6,11 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
 
-	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
 
@@ -62,7 +62,9 @@ func (a *accumulator) Calls() []provider.ToolCall {
 	return out
 }
 
-func buildBody(model string, reasoning bool, maxTokens int, req provider.Request) map[string]any {
+// buildBody — тело запроса. Потолка вывода, температуры и усилия рассуждения в
+// нём нет: настраиваемы только адрес, модель и ключ.
+func buildBody(model string, req provider.Request) map[string]any {
 	msgs := make([]map[string]any, 0, len(req.Messages)+1)
 	if req.System != "" {
 		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
@@ -98,11 +100,6 @@ func buildBody(model string, reasoning bool, maxTokens int, req provider.Request
 		// Без этого поля OpenAI и OpenRouter не присылают расход вовсе.
 		"stream_options": map[string]any{"include_usage": true},
 	}
-	if reasoning {
-		body["max_completion_tokens"] = req.EffectiveMaxTokensFor(maxTokens)
-	} else {
-		body["max_tokens"] = req.EffectiveMaxTokensFor(maxTokens)
-	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))
 		for _, t := range req.Tools {
@@ -119,50 +116,27 @@ func buildBody(model string, reasoning bool, maxTokens int, req provider.Request
 	return body
 }
 
-// tune дописывает настройки профиля, которых нет в запросе: усилие
-// рассуждения — только рассуждающим моделям, температуру — только обычным
-// (рассуждающие её не принимают).
-func tune(body map[string]any, reasoning bool, effort string, temperature *float64) {
-	if reasoning && effort != "" {
-		body["reasoning_effort"] = effort
-	}
-	if !reasoning && temperature != nil {
-		body["temperature"] = *temperature
-	}
-}
-
 type client struct {
-	baseURL     string
-	key         string
-	model       string
-	reasoning   bool
-	maxTokens   int
-	effort      string
-	temperature *float64
-	http        *http.Client
+	baseURL string
+	key     string
+	model   string
+	http    *http.Client
 }
 
-func New(p config.Profile) (provider.Provider, error) {
-	key, err := p.APIKey()
-	if err != nil {
-		return nil, err
-	}
+// New — провайдер для OpenAI-совместимого адреса. Адрес и модель проверены
+// вызывающим (config.Validate), ключ — тоже (keys.Normalize): здесь они
+// только используются.
+func New(baseURL, model, key string) provider.Provider {
 	return &client{
-		baseURL:     strings.TrimSuffix(p.BaseURL, "/"),
-		key:         key,
-		model:       p.Model,
-		reasoning:   p.Reasoning,
-		maxTokens:   p.MaxOutputTokens,
-		effort:      p.ReasoningEffort,
-		temperature: p.Temperature,
-		http:        &http.Client{},
-	}, nil
+		baseURL: strings.TrimSuffix(baseURL, "/"),
+		key:     key,
+		model:   model,
+		http:    &http.Client{},
+	}
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (provider.Stream, error) {
-	body := buildBody(c.model, c.reasoning, c.maxTokens, req)
-	tune(body, c.reasoning, c.effort, c.temperature)
-	payload, err := json.Marshal(body)
+	payload, err := json.Marshal(buildBody(c.model, req))
 	if err != nil {
 		return nil, err
 	}
@@ -181,8 +155,14 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (provider.Str
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		var buf bytes.Buffer
-		buf.ReadFrom(resp.Body)
-		return nil, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(buf.String()))
+		buf.ReadFrom(io.LimitReader(resp.Body, 64<<10))
+		// Провайдер иногда повторяет присланный ключ в тексте отказа; дальше
+		// этот текст идёт в журнал и на экран.
+		text := strings.TrimSpace(buf.String())
+		if c.key != "" {
+			text = strings.ReplaceAll(text, c.key, "…")
+		}
+		return nil, fmt.Errorf("%s: %s", resp.Status, text)
 	}
 	return &stream{body: resp.Body, sc: bufio.NewScanner(resp.Body)}, nil
 }

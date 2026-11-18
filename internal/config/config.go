@@ -1,320 +1,169 @@
+// Package config — настройки подключения к модели: один OpenAI-совместимый
+// адрес, одна модель и бюджет контекста. Профилей нет: Claude и другие модели
+// доступны через любой OpenAI-совместимый шлюз (например, OpenRouter), а ключ
+// лежит отдельно, в keys.json (пакет keys).
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/alex0x12/aristotle/internal/fsutil"
 )
 
-// Допустимые значения Kind
+// Умолчания. DefaultCorpusK — не настройка: сколько глав возвращает поиск,
+// если модель не попросила своё k.
 const (
-	KindAnthropic = "anthropic"
-	KindOpenAI    = "openai"
+	DefaultBaseURL       = "https://api.deepseek.com/v1"
+	DefaultModel         = "deepseek-flash"
+	DefaultContextBudget = 128000
+	DefaultCorpusK       = 6
 )
 
-// DefaultContextBudget — бюджет контекста встроенных профилей, токенов.
-const DefaultContextBudget = 64000
+// Пределы значений. Верхние нужны не как мнение о «разумном», а чтобы опечатка
+// (лишний нуль) не стала настройкой.
+const (
+	MaxContextBudget = 10_000_000
+	maxModelRunes    = 200
+	maxURLBytes      = 2048
+)
 
-// DefaultCorpusK — сколько глав возвращает поиск, если модель не попросила иначе.
-const DefaultCorpusK = 6
-
-// Prices — цены профиля в долларах за миллион токенов.
-type Prices struct {
-	Input      float64 `json:"input"`
-	Output     float64 `json:"output"`
-	CacheRead  float64 `json:"cache_read"`
-	CacheWrite float64 `json:"cache_write"`
-}
-
-// Profile описывает один способ достучаться до модели.
-type Profile struct {
-	Name    string `json:"-"`
-	Kind    string `json:"kind,omitempty"`
-	BaseURL string `json:"base_url,omitempty"`
-	Model   string `json:"model,omitempty"`
-	KeyEnv  string `json:"key_env,omitempty"`
-	// Reasoning — рассуждающая модель (поддерживает reasoning.effort и не
-	// принимает temperature).
-	Reasoning bool `json:"reasoning,omitempty"`
-	// MaxOutputTokens переопределяет provider.DefaultMaxTokens для этого
-	// профиля. DefaultMaxTokens = 64000 — факт про Anthropic, а не про всех
-	// провайдеров: если профиль указывает на модель с меньшим потолком
-	// вывода (например, конкретную модель на openrouter), каждый запрос
-	// будет отвечать четырёхсотой ошибкой без возможности починить иначе
-	// как правкой кода. 0 значит "не задано" — используется умолчание
-	// провайдера.
-	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
-	// ReasoningEffort — low, medium или high. Уходит только рассуждающим
-	// моделям OpenAI-совместимых провайдеров; пусто — умолчание провайдера.
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-	// Temperature — только для обычных моделей; nil — умолчание провайдера.
-	Temperature *float64 `json:"temperature,omitempty"`
-	// ContextBudget — потолок входа запроса в токенах; 0 — без урезания.
-	ContextBudget int `json:"context_budget,omitempty"`
-	// Prices — цены за миллион токенов; nil — стоимость не считается.
-	Prices *Prices `json:"prices,omitempty"`
-	// Key — ключ из keys.json, его подставляет app.Resolve. В config.json
-	// не пишется никогда.
-	Key string `json:"-"`
-}
-
-// profileData — внутренний тип для чтения и записи JSON: указатели
-// различают опущенное поле и явное значение (false, 0, пустую строку).
-type profileData struct {
-	Kind            string   `json:"kind,omitempty"`
-	BaseURL         string   `json:"base_url,omitempty"`
-	Model           string   `json:"model,omitempty"`
-	KeyEnv          string   `json:"key_env,omitempty"`
-	Reasoning       *bool    `json:"reasoning,omitempty"`
-	MaxOutputTokens *int     `json:"max_output_tokens,omitempty"`
-	ReasoningEffort *string  `json:"reasoning_effort,omitempty"`
-	Temperature     *float64 `json:"temperature,omitempty"`
-	ContextBudget   *int     `json:"context_budget,omitempty"`
-	Prices          *Prices  `json:"prices,omitempty"`
-}
-
-// fileData — содержимое config.json: только отличия от встроенного.
-type fileData struct {
-	Default  string                 `json:"default,omitempty"`
-	CorpusK  *int                   `json:"corpus_k,omitempty"`
-	Profiles map[string]profileData `json:"profiles,omitempty"`
-}
-
-func (d profileData) empty() bool { return d == profileData{} }
-
-// apply накладывает присутствующие в файле поля на профиль.
-func apply(cur Profile, pd profileData) Profile {
-	if pd.Kind != "" {
-		cur.Kind = pd.Kind
-	}
-	if pd.BaseURL != "" {
-		cur.BaseURL = pd.BaseURL
-	}
-	if pd.Model != "" {
-		cur.Model = pd.Model
-	}
-	if pd.KeyEnv != "" {
-		cur.KeyEnv = pd.KeyEnv
-	}
-	if pd.Reasoning != nil {
-		cur.Reasoning = *pd.Reasoning
-	}
-	if pd.MaxOutputTokens != nil {
-		cur.MaxOutputTokens = *pd.MaxOutputTokens
-	}
-	if pd.ReasoningEffort != nil {
-		cur.ReasoningEffort = *pd.ReasoningEffort
-	}
-	if pd.Temperature != nil {
-		t := *pd.Temperature
-		cur.Temperature = &t
-	}
-	if pd.ContextBudget != nil {
-		cur.ContextBudget = *pd.ContextBudget
-	}
-	if pd.Prices != nil {
-		p := *pd.Prices
-		cur.Prices = &p
-	}
-	return cur
-}
-
+// Config — всё, что настраивается. Ключа здесь нет и не будет: config.json
+// безопасно показывать и копировать.
 type Config struct {
-	Default  string             `json:"default,omitempty"`
-	Profiles map[string]Profile `json:"profiles,omitempty"`
-	// CorpusK — глав на поиск по умолчанию; модель вправе попросить своё k.
-	CorpusK int `json:"corpus_k,omitempty"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	// ContextBudget — потолок входа запроса в токенах; 0 — без урезания.
+	ContextBudget int `json:"context_budget"`
 }
 
-func Builtin() Config {
-	return Config{
-		Default: "deepseek",
-		CorpusK: DefaultCorpusK,
-		Profiles: map[string]Profile{
-			"claude": {
-				Kind:          KindAnthropic,
-				Model:         "claude-opus-5",
-				KeyEnv:        "ANTHROPIC_API_KEY",
-				ContextBudget: DefaultContextBudget,
-			},
-			"deepseek": {
-				Kind:          KindOpenAI,
-				BaseURL:       "https://api.deepseek.com/v1",
-				Model:         "deepseek-v4-pro",
-				KeyEnv:        "DEEPSEEK_API_KEY",
-				ContextBudget: DefaultContextBudget,
-			},
-			// Быстрая модель того же DeepSeek: адрес и переменная ключа общие с
-			// deepseek, а ключ в keys.json у профиля свой (ключи — по имени профиля).
-			"deepseek-flash": {
-				Kind:          KindOpenAI,
-				BaseURL:       "https://api.deepseek.com/v1",
-				Model:         "deepseek-v4-flash",
-				KeyEnv:        "DEEPSEEK_API_KEY",
-				ContextBudget: DefaultContextBudget,
-			},
-			"openai": {
-				Kind:          KindOpenAI,
-				BaseURL:       "https://api.openai.com/v1",
-				Model:         "gpt-5.6",
-				KeyEnv:        "OPENAI_API_KEY",
-				Reasoning:     true, // gpt-5.6 — рассуждающая модель с поддержкой reasoning.effort
-				ContextBudget: DefaultContextBudget,
-			},
-			"openrouter": {
-				Kind:          KindOpenAI,
-				BaseURL:       "https://openrouter.ai/api/v1",
-				Model:         "anthropic/claude-opus-5",
-				KeyEnv:        "OPENROUTER_API_KEY",
-				ContextBudget: DefaultContextBudget,
-			},
-		},
+// Default — конфиг без файла.
+func Default() Config {
+	return Config{BaseURL: DefaultBaseURL, Model: DefaultModel, ContextBudget: DefaultContextBudget}
+}
+
+// Normalized — конфиг с обрезанными пробелами по краям адреса и модели: след
+// копирования из чата. Всё остальное, включая ошибки, остаётся как есть.
+func (c Config) Normalized() Config {
+	c.BaseURL = strings.TrimSpace(c.BaseURL)
+	c.Model = strings.TrimSpace(c.Model)
+	return c
+}
+
+// fieldErr — ошибка с названием поля, по-русски. Присланное значение в ней не
+// повторяется: в адресе мог оказаться пароль, а в модели — вставленный ключ.
+func fieldErr(field, format string, a ...any) error {
+	return fmt.Errorf("%s: %s", field, fmt.Sprintf(format, a...))
+}
+
+func hasSpaceOrControl(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
+}
+
+// Validate проверяет значения; его зовут Load, Save и веб при сохранении
+// настроек, так что файл и экран принимают одно и то же.
+func (c Config) Validate() error {
+	if c.ContextBudget < 0 || c.ContextBudget > MaxContextBudget {
+		return fieldErr("context_budget", "от 0 до %d (0 — без урезания)", MaxContextBudget)
 	}
+	model := strings.TrimSpace(c.Model)
+	if model == "" || utf8.RuneCountInString(model) > maxModelRunes ||
+		strings.ContainsFunc(model, unicode.IsControl) {
+		return fieldErr("model", "название модели обязательно, без управляющих знаков, до %d знаков", maxModelRunes)
+	}
+	return ValidateBaseURL(c.BaseURL)
 }
 
-// Load накладывает JSON из path поверх встроенных профилей.
-// Отсутствие файла — не ошибка: встроенных достаточно.
+// ValidateBaseURL — адрес API: только http и https, хост обязателен, логина и
+// пароля в адресе нет (они попали бы в сообщения об ошибках и журнал).
+func ValidateBaseURL(raw string) error {
+	if raw == "" {
+		return fieldErr("base_url", "адрес API обязателен")
+	}
+	if len(raw) > maxURLBytes || hasSpaceOrControl(raw) {
+		return fieldErr("base_url", "адрес без пробелов и управляющих знаков, до %d знаков", maxURLBytes)
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return fieldErr("base_url", "адрес должен начинаться с http:// или https:// и называть хост")
+	}
+	if u.User != nil {
+		return fieldErr("base_url", "логин и пароль в адресе не допускаются")
+	}
+	return nil
+}
+
+// Load читает config.json поверх умолчаний: опущенное поле остаётся
+// умолчанием. Нет файла — не ошибка. Неизвестное поле — ошибка с его именем:
+// так старый формат (профили, corpus_k) или файл из будущей версии не
+// принимается молча за пустой и не теряется при следующем сохранении
+// (вызывающая сторона решает, что делать: веб показывает предупреждение и
+// делает копию, командная строка идёт на умолчаниях). Вместе с ошибкой
+// возвращаются умолчания.
 func Load(path string) (Config, error) {
-	base := Builtin()
+	c := Default()
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return base, nil
+		return c, nil
 	}
 	if err != nil {
-		return base, fmt.Errorf("конфиг %s: %w", path, err)
+		return Default(), fmt.Errorf("конфиг %s: %w", path, err)
 	}
-
-	// Промежуточный тип различает опущенные поля и явные значения.
-	var over fileData
-	if err := json.Unmarshal(data, &over); err != nil {
-		return base, fmt.Errorf("конфиг %s: %w", path, err)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&c); err != nil {
+		return Default(), fmt.Errorf("конфиг %s: %w", path, decodeError(err))
 	}
-	if over.Default != "" {
-		base.Default = over.Default
+	if _, err := dec.Token(); err != io.EOF {
+		return Default(), fmt.Errorf("конфиг %s: после JSON есть лишнее", path)
 	}
-	if over.CorpusK != nil {
-		base.CorpusK = *over.CorpusK
+	c = c.Normalized()
+	if err := c.Validate(); err != nil {
+		return Default(), fmt.Errorf("конфиг %s: %w", path, err)
 	}
-	for name, pd := range over.Profiles {
-		// Нового профиля в base нет — накладывается на пустой.
-		base.Profiles[name] = apply(base.Profiles[name], pd)
-	}
-	return base, nil
+	return c, nil
 }
 
-// Save пишет в path только отличия c от встроенного — так, чтобы Load(path)
-// вернул c. Встроенный профиль, которого в c нет, при следующей загрузке
-// вернётся со своими умолчаниями: удалить встроенный нельзя, только сбросить.
-// Запись атомарная, права 0600.
+// decodeError переводит ошибки разбора на русский и называет поле, на котором
+// разбор остановился.
+func decodeError(err error) error {
+	var ute *json.UnmarshalTypeError
+	var se *json.SyntaxError
+	switch {
+	case errors.As(err, &ute):
+		return fmt.Errorf("поле %s: значение не того типа", ute.Field)
+	case strings.HasPrefix(err.Error(), "json: unknown field "):
+		return fmt.Errorf("неизвестное поле %s (старый формат конфигурации или файл из другой версии)",
+			strings.TrimPrefix(err.Error(), "json: unknown field "))
+	case errors.As(err, &se):
+		return fmt.Errorf("не JSON (ошибка на байте %d)", se.Offset)
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return errors.New("файл пуст или оборван")
+	default:
+		return err
+	}
+}
+
+// Save проверяет конфиг и пишет его в path целиком, всеми тремя полями, даже
+// равными умолчаниям: файл читается сам по себе и не меняется вместе с
+// умолчаниями программы. Недопустимый конфиг не пишется. Запись атомарная,
+// права 0600.
 func Save(path string, c Config) error {
-	base := Builtin()
-	out := fileData{Profiles: map[string]profileData{}}
-	if c.Default != base.Default {
-		out.Default = c.Default
+	c = c.Normalized()
+	if err := c.Validate(); err != nil {
+		return err
 	}
-	if c.CorpusK != base.CorpusK {
-		k := c.CorpusK
-		out.CorpusK = &k
-	}
-	for name, p := range c.Profiles {
-		b, builtin := base.Profiles[name]
-		d := diff(b, p, !builtin)
-		if !builtin || !d.empty() {
-			out.Profiles[name] = d
-		}
-	}
-	data, err := json.MarshalIndent(out, "", "  ")
+	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
 	return fsutil.WriteAtomic(path, append(data, '\n'), 0o600)
-}
-
-// diff — поля p, отличные от b; full — профиль новый, пишется целиком.
-func diff(b, p Profile, full bool) profileData {
-	var d profileData
-	if full || p.Kind != b.Kind {
-		d.Kind = p.Kind
-	}
-	if full || p.BaseURL != b.BaseURL {
-		d.BaseURL = p.BaseURL
-	}
-	if full || p.Model != b.Model {
-		d.Model = p.Model
-	}
-	if full || p.KeyEnv != b.KeyEnv {
-		d.KeyEnv = p.KeyEnv
-	}
-	if full || p.Reasoning != b.Reasoning {
-		v := p.Reasoning
-		d.Reasoning = &v
-	}
-	if full || p.MaxOutputTokens != b.MaxOutputTokens {
-		v := p.MaxOutputTokens
-		d.MaxOutputTokens = &v
-	}
-	if full || p.ReasoningEffort != b.ReasoningEffort {
-		v := p.ReasoningEffort
-		d.ReasoningEffort = &v
-	}
-	if full || !sameFloat(p.Temperature, b.Temperature) {
-		d.Temperature = p.Temperature
-	}
-	if full || p.ContextBudget != b.ContextBudget {
-		v := p.ContextBudget
-		d.ContextBudget = &v
-	}
-	if full || !samePrices(p.Prices, b.Prices) {
-		d.Prices = p.Prices
-	}
-	return d
-}
-
-func sameFloat(a, b *float64) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
-}
-
-func samePrices(a, b *Prices) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
-}
-
-func (c Config) Resolve(name string) (Profile, error) {
-	if name == "" {
-		name = c.Default
-	}
-	p, ok := c.Profiles[name]
-	if !ok {
-		return Profile{}, fmt.Errorf("неизвестный профиль %q", name)
-	}
-	// Проверяем, что Kind имеет допустимое значение
-	if p.Kind != KindAnthropic && p.Kind != KindOpenAI {
-		return Profile{}, fmt.Errorf("профиль %q: недопустимое значение kind=%q, ожидается %q или %q",
-			name, p.Kind, KindAnthropic, KindOpenAI)
-	}
-	p.Name = name
-	return p, nil
-}
-
-// APIKey — ключ профиля: переменная окружения, если задана, иначе ключ из
-// keys.json, подставленный app.Resolve.
-func (p Profile) APIKey() (string, error) {
-	if p.KeyEnv != "" {
-		if key := os.Getenv(p.KeyEnv); key != "" {
-			return key, nil
-		}
-	}
-	if p.Key != "" {
-		return p.Key, nil
-	}
-	return "", fmt.Errorf("профиль %s: не задана переменная %s и нет ключа в keys.json",
-		p.Name, p.KeyEnv)
 }

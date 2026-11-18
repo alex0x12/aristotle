@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/alex0x12/aristotle/internal/chat"
-	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/provider"
 	"github.com/alex0x12/aristotle/internal/render"
 )
@@ -26,7 +25,7 @@ func FormatTokens(n int) string {
 	return b.String()
 }
 
-// UsageLine — строка расхода для командной строки после ответа.
+// UsageLine — строка расхода для командной строки после ответа: токены, без цены.
 func UsageLine(u provider.Usage) string {
 	if !u.Known {
 		return "[токены: провайдер не сообщил]"
@@ -35,22 +34,8 @@ func UsageLine(u provider.Usage) string {
 	if u.CacheRead > 0 {
 		parts = append(parts, "кэш "+FormatTokens(u.CacheRead))
 	}
-	if u.CacheWrite > 0 {
-		parts = append(parts, "в кэш "+FormatTokens(u.CacheWrite))
-	}
 	parts = append(parts, "вывод "+FormatTokens(u.Output))
 	return "[токены: " + strings.Join(parts, " · ") + "]"
-}
-
-// Cost — стоимость расхода по ценам профиля в долларах; nil — цен нет или
-// расход неизвестен.
-func Cost(p *config.Prices, u provider.Usage) *float64 {
-	if p == nil || !u.Known {
-		return nil
-	}
-	c := (float64(u.Input)*p.Input + float64(u.Output)*p.Output +
-		float64(u.CacheRead)*p.CacheRead + float64(u.CacheWrite)*p.CacheWrite) / 1e6
-	return &c
 }
 
 // QuotesOf — врезки ответа для журнала.

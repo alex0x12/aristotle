@@ -568,9 +568,10 @@ func TestSearchClientGoneIsSilent(t *testing.T) {
 	}
 }
 
-// Испорченный config.json поиск не останавливает: берётся встроенный конфиг
-// (6 глав на поиск), а ни путь к файлу, ни текст разбора в ответ не идут.
-func TestSearchBrokenConfigFallsBackToBuiltin(t *testing.T) {
+// Число глав на поиск — не настройка (config.DefaultCorpusK = 6), так что
+// испорченный config.json поиск не касается вовсе: ни k, ни путь к файлу, ни
+// текст разбора в ответ не идут.
+func TestSearchIgnoresBrokenConfig(t *testing.T) {
 	f := &recFinder{}
 	s := newTestServer(t, nil, f)
 	if err := os.WriteFile(s.Paths.Config, []byte("{не json"), 0o600); err != nil {

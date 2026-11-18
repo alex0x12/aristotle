@@ -1,15 +1,11 @@
 package app
 
 import (
-	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/alex0x12/aristotle/internal/chat"
-	"github.com/alex0x12/aristotle/internal/config"
-	"github.com/alex0x12/aristotle/internal/keys"
 	"github.com/alex0x12/aristotle/internal/provider"
 	"github.com/alex0x12/aristotle/internal/render"
 )
@@ -158,77 +154,6 @@ func TestLastUserMessageSkipsToolResultCarriers(t *testing.T) {
 	}
 }
 
-// TestSwitchProfileKnownChangesProvider закрывает дефект №3: переключение на
-// известный профиль обязано создать нового провайдера.
-func TestSwitchProfileKnownChangesProvider(t *testing.T) {
-	os.Setenv("ARISTOTLE_TEST_DEEPSEEK_KEY", "тестовый-ключ")
-	defer os.Unsetenv("ARISTOTLE_TEST_DEEPSEEK_KEY")
-
-	cfg := config.Builtin()
-	p := cfg.Profiles["deepseek"]
-	p.KeyEnv = "ARISTOTLE_TEST_DEEPSEEK_KEY"
-	cfg.Profiles["deepseek"] = p
-
-	profile, prov, err := SwitchProfile(cfg, keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}, "deepseek")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if profile.Name != "deepseek" {
-		t.Errorf("Name = %q", profile.Name)
-	}
-	if prov == nil {
-		t.Error("провайдер не создан")
-	}
-}
-
-// TestSwitchProfileUnknownReturnsError закрывает вторую половину дефекта №3:
-// неизвестный профиль обязан вернуть ошибку, не запаниковав и не изменив
-// ничего у вызывающей стороны (она просто не подставит нулевые значения).
-func TestSwitchProfileUnknownReturnsError(t *testing.T) {
-	cfg := config.Builtin()
-	profile, prov, err := SwitchProfile(cfg, keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}, "нет-такого-профиля")
-	if err == nil {
-		t.Fatal("ожидалась ошибка для неизвестного профиля")
-	}
-	if prov != nil {
-		t.Error("провайдер не должен быть создан при ошибке")
-	}
-	if profile.Name != "" {
-		t.Error("профиль не должен быть заполнен при ошибке")
-	}
-}
-
-// TestSwitchProfileMissingKeyReturnsError — известный профиль, но без ключа
-// в окружении: тоже ошибка, а не паника, и тоже не должен ничего менять.
-func TestSwitchProfileMissingKeyReturnsError(t *testing.T) {
-	cfg := config.Builtin()
-	p := cfg.Profiles["claude"]
-	p.KeyEnv = "ARISTOTLE_TEST_MISSING_KEY_FOR_SWITCH"
-	cfg.Profiles["claude"] = p
-	os.Unsetenv(p.KeyEnv)
-
-	_, prov, err := SwitchProfile(cfg, keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}, "claude")
-	if err == nil {
-		t.Fatal("ожидалась ошибка при отсутствии ключа")
-	}
-	if prov != nil {
-		t.Error("провайдер не должен быть создан при отсутствии ключа")
-	}
-}
-
-func TestProfileNamesSortedAndComplete(t *testing.T) {
-	cfg := config.Builtin()
-	names := ProfileNames(cfg)
-	if len(names) != len(cfg.Profiles) {
-		t.Fatalf("ProfileNames вернул %d имён, ожидалось %d", len(names), len(cfg.Profiles))
-	}
-	for i := 1; i < len(names); i++ {
-		if names[i-1] > names[i] {
-			t.Fatalf("список не отсортирован: %v", names)
-		}
-	}
-}
-
 func TestDefaultPathsUnderHome(t *testing.T) {
 	t.Setenv("HOME", "/home/тест")
 	p, err := DefaultPaths()
@@ -262,104 +187,6 @@ func TestDropLastTurnRemovesFromLastQuestion(t *testing.T) {
 	got := DropLastTurn(msgs)
 	if len(got) != 2 || got[1].Text != "ответ" {
 		t.Fatalf("DropLastTurn = %+v", got)
-	}
-}
-
-func TestResolveTakesKeyFromFile(t *testing.T) {
-	store := keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}
-	if err := store.Set("claude", "sk-ant-из-файла"); err != nil {
-		t.Fatal(err)
-	}
-	cfg := config.Builtin()
-	p := cfg.Profiles["claude"]
-	p.KeyEnv = "ARISTOTLE_TEST_RESOLVE_KEY"
-	cfg.Profiles["claude"] = p
-	t.Setenv(p.KeyEnv, "")
-
-	got, err := Resolve(cfg, store, "claude")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if k, _ := got.APIKey(); k != "sk-ant-из-файла" || KeySource(got) != "file" {
-		t.Fatalf("ключ %q, источник %q", k, KeySource(got))
-	}
-	t.Setenv(p.KeyEnv, "sk-из-окружения")
-	if KeySource(got) != "env" {
-		t.Fatalf("источник %q", KeySource(got))
-	}
-}
-
-// brokenKeysStore — хранилище с испорченным keys.json во временном каталоге.
-func brokenKeysStore(t *testing.T) keys.Store {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "keys.json")
-	if err := os.WriteFile(path, []byte("{это не json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return keys.Store{Path: path}
-}
-
-// Ключ из переменной окружения не должен зависеть от того, что лежит на
-// диске: испорченный keys.json не вправе ронять ни запуск, ни /model.
-func TestResolveIgnoresBrokenKeysFileWhenEnvSet(t *testing.T) {
-	store := brokenKeysStore(t)
-	cfg := config.Builtin()
-	p := cfg.Profiles["claude"]
-	p.KeyEnv = "ARISTOTLE_TEST_BROKEN_FILE_ENV_SET"
-	cfg.Profiles["claude"] = p
-	t.Setenv(p.KeyEnv, "sk-из-окружения")
-
-	got, err := Resolve(cfg, store, "claude")
-	if err != nil {
-		t.Fatalf("Resolve: ключ есть в окружении, ошибка файла не нужна: %v", err)
-	}
-	if k, _ := got.APIKey(); k != "sk-из-окружения" || KeySource(got) != "env" {
-		t.Fatalf("ключ %q, источник %q", k, KeySource(got))
-	}
-	profile, prov, err := SwitchProfile(cfg, store, "claude")
-	if err != nil || prov == nil || profile.Name != "claude" {
-		t.Fatalf("SwitchProfile: профиль %q, провайдер %v, ошибка %v", profile.Name, prov, err)
-	}
-}
-
-// Без переменной окружения файл — единственный источник, и его ошибка
-// должна дойти до пользователя, а не превратиться в «ключа нет».
-func TestResolveReportsBrokenKeysFileWhenEnvUnset(t *testing.T) {
-	store := brokenKeysStore(t)
-	cfg := config.Builtin()
-	p := cfg.Profiles["claude"]
-	p.KeyEnv = "ARISTOTLE_TEST_BROKEN_FILE_ENV_UNSET"
-	cfg.Profiles["claude"] = p
-	t.Setenv(p.KeyEnv, "")
-
-	if _, err := Resolve(cfg, store, "claude"); err == nil {
-		t.Fatal("Resolve: ожидалась ошибка чтения keys.json")
-	}
-	profile, prov, err := SwitchProfile(cfg, store, "claude")
-	if err == nil || prov != nil || profile.Name != "" {
-		t.Fatalf("SwitchProfile: профиль %q, провайдер %v, ошибка %v", profile.Name, prov, err)
-	}
-}
-
-// Исправный файл при незаданной переменной — ключ из файла, и по нему
-// собирается провайдер.
-func TestSwitchProfileUsesKeyFromFileWhenEnvUnset(t *testing.T) {
-	store := keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}
-	if err := store.Set("claude", "sk-ant-из-файла"); err != nil {
-		t.Fatal(err)
-	}
-	cfg := config.Builtin()
-	p := cfg.Profiles["claude"]
-	p.KeyEnv = "ARISTOTLE_TEST_FILE_KEY_ENV_UNSET"
-	cfg.Profiles["claude"] = p
-	t.Setenv(p.KeyEnv, "")
-
-	profile, prov, err := SwitchProfile(cfg, store, "claude")
-	if err != nil || prov == nil {
-		t.Fatalf("SwitchProfile: провайдер %v, ошибка %v", prov, err)
-	}
-	if KeySource(profile) != "file" {
-		t.Fatalf("источник %q", KeySource(profile))
 	}
 }
 
@@ -649,49 +476,5 @@ func TestResumeMessagesRollsBackWhitespaceOnlyAnswer(t *testing.T) {
 				t.Errorf("%s: после отзыва последним стоит удавшийся ход, LastTurnKept = false", name)
 			}
 		}
-	}
-}
-
-// deepseek-flash делит с deepseek переменную ключа, но не ключ из keys.json:
-// файл ключей — по имени профиля.
-func TestDeepseekFlashSharesEnvButNotFileKey(t *testing.T) {
-	cfg := config.Builtin()
-	store := keys.Store{Path: filepath.Join(t.TempDir(), "keys.json")}
-	if err := store.Set("deepseek", "ключ-только-для-deepseek"); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("DEEPSEEK_API_KEY", "")
-	for name, want := range map[string]string{"deepseek": "file", "deepseek-flash": "none"} {
-		p, err := Resolve(cfg, store, name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := KeySource(p); got != want {
-			t.Errorf("без окружения: %s — источник %q, ожидался %q", name, got, want)
-		}
-	}
-
-	t.Setenv("DEEPSEEK_API_KEY", "ключ-из-окружения")
-	for _, name := range []string{"deepseek", "deepseek-flash"} {
-		p, err := Resolve(cfg, store, name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if k, _ := p.APIKey(); KeySource(p) != "env" || k != "ключ-из-окружения" {
-			t.Errorf("с окружением: %s — источник %q", name, KeySource(p))
-		}
-	}
-}
-
-// Список профилей для /model берётся из конфига целиком, без особых случаев.
-func TestProfileNamesIncludeDeepseekFlash(t *testing.T) {
-	names := ProfileNames(config.Builtin())
-	found := false
-	for _, n := range names {
-		found = found || n == "deepseek-flash"
-	}
-	if !found {
-		t.Fatalf("в списке нет deepseek-flash: %v", names)
 	}
 }

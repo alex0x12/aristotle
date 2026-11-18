@@ -32,10 +32,13 @@ type Quote struct {
 }
 
 type Record struct {
-	Time       time.Time       `json:"time"`
-	Role       string          `json:"role"`
-	Text       string          `json:"text"`
-	Title      string          `json:"title,omitempty"`
+	Time  time.Time `json:"time"`
+	Role  string    `json:"role"`
+	Text  string    `json:"text"`
+	Title string    `json:"title,omitempty"`
+	// Profile и CostUSD — только чтение: так писали журналы до «одной модели без
+	// профилей и цен». Append их не пишет никогда, а старые записи читаются как
+	// раньше и ни на что не влияют.
 	Profile    string          `json:"profile,omitempty"`
 	Model      string          `json:"model,omitempty"`
 	Usage      *provider.Usage `json:"usage,omitempty"`
@@ -88,6 +91,8 @@ func (h History) Append(rec Record) error {
 	if rec.Time.IsZero() {
 		rec.Time = time.Now().UTC()
 	}
+	// Поля только для чтения старых журналов в новые записи не попадают.
+	rec.Profile, rec.CostUSD = "", nil
 	if err := os.MkdirAll(filepath.Dir(h.Path), 0o755); err != nil {
 		return err
 	}

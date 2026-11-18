@@ -2,9 +2,6 @@ package provider
 
 import "context"
 
-// DefaultMaxTokens — при стриминге занижать нечего, таймаутов тут не бывает.
-const DefaultMaxTokens = 64000
-
 type Role string
 
 const (
@@ -37,30 +34,13 @@ type ToolDef struct {
 	Schema      map[string]any
 }
 
+// Request — один запрос к модели. Потолка вывода, температуры и прочих ручек
+// здесь нет намеренно: настраивается только подключение (адрес, модель, ключ),
+// остальное решает провайдер.
 type Request struct {
-	System    string
-	Messages  []Message
-	Tools     []ToolDef
-	MaxTokens int
-}
-
-func (r Request) EffectiveMaxTokens() int {
-	return r.EffectiveMaxTokensFor(0)
-}
-
-// EffectiveMaxTokensFor — то же самое, но с учётом потолка вывода профиля.
-// DefaultMaxTokens — факт про Anthropic, а не про всех провайдеров: если у
-// профиля меньший потолок (например, конкретная модель на openrouter), явный
-// per-запросный MaxTokens побеждает, иначе используется потолок профиля
-// (profileMax, 0 значит "не задан"), и только если оба не заданы — умолчание.
-func (r Request) EffectiveMaxTokensFor(profileMax int) int {
-	if r.MaxTokens > 0 {
-		return r.MaxTokens
-	}
-	if profileMax > 0 {
-		return profileMax
-	}
-	return DefaultMaxTokens
+	System   string
+	Messages []Message
+	Tools    []ToolDef
 }
 
 type EventKind int
@@ -82,13 +62,14 @@ type Event struct {
 }
 
 // Usage — расход токенов запроса или суммы запросов. Input — входные токены
-// без кэша; CacheRead и CacheWrite — прочитанные из кэша и записанные в него.
+// без кэша; CacheRead — прочитанные из кэша. CacheWrite только читается из
+// старых журналов (его сообщал прежний провайдер): новые запросы его не заполняют.
 // Known = false: провайдер расход не сообщил, и сумма неизвестна.
 type Usage struct {
 	Input      int  `json:"input"`
 	Output     int  `json:"output"`
 	CacheRead  int  `json:"cache_read"`
-	CacheWrite int  `json:"cache_write"`
+	CacheWrite int  `json:"cache_write,omitempty"`
 	Known      bool `json:"known"`
 }
 

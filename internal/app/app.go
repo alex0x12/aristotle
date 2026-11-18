@@ -1,5 +1,5 @@
 // Package app собирает беседу одинаково для командной строки и
-// веб-интерфейса: пути к файлам пользователя, профиль с провайдером,
+// веб-интерфейса: пути к файлам пользователя, подключение к модели,
 // восстановление истории из журнала.
 package app
 
@@ -7,17 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/alex0x12/aristotle/internal/chat"
-	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
-	"github.com/alex0x12/aristotle/internal/keys"
 	"github.com/alex0x12/aristotle/internal/provider"
-	anth "github.com/alex0x12/aristotle/internal/provider/anthropic"
-	"github.com/alex0x12/aristotle/internal/provider/openaicompat"
 )
 
 // Paths — где лежат файлы пользователя.
@@ -64,81 +59,6 @@ func DropLastTurn(msgs []provider.Message) []provider.Message {
 		}
 	}
 	return msgs
-}
-
-// NewProvider создаёт провайдера по виду профиля.
-func NewProvider(p config.Profile) (provider.Provider, error) {
-	switch p.Kind {
-	case "anthropic":
-		return anth.New(p)
-	case "openai":
-		return openaicompat.New(p)
-	default:
-		return nil, fmt.Errorf("профиль %s: неизвестный kind %q", p.Name, p.Kind)
-	}
-}
-
-// envKeySet — задана ли переменная окружения с ключом профиля.
-func envKeySet(p config.Profile) bool {
-	return p.KeyEnv != "" && os.Getenv(p.KeyEnv) != ""
-}
-
-// Resolve — профиль по имени с ключом из keys.json. Переменная окружения
-// профиля важнее: когда она задана, файл не читается вовсе, чтобы испорченный
-// keys.json не ломал запуск и /model тому, у кого ключ в окружении. Ошибка
-// чтения файла доходит до вызывающего, только если окружение ключа не даёт.
-func Resolve(cfg config.Config, store keys.Store, name string) (config.Profile, error) {
-	p, err := cfg.Resolve(name)
-	if err != nil {
-		return config.Profile{}, err
-	}
-	if envKeySet(p) {
-		return p, nil
-	}
-	key, err := store.Get(p.Name)
-	if err != nil {
-		return config.Profile{}, err
-	}
-	p.Key = key
-	return p, nil
-}
-
-// KeySource — откуда возьмётся ключ профиля: "env", "file" или "none".
-func KeySource(p config.Profile) string {
-	switch {
-	case envKeySet(p):
-		return "env"
-	case p.Key != "":
-		return "file"
-	default:
-		return "none"
-	}
-}
-
-// SwitchProfile разрешает имя профиля и создаёт для него провайдера. Не
-// трогает ничего снаружи: при ошибке (нет такого профиля, не задан ключ)
-// вызывающая сторона просто не подставляет возвращённые значения, и прежний
-// профиль остаётся рабочим.
-func SwitchProfile(cfg config.Config, store keys.Store, name string) (config.Profile, provider.Provider, error) {
-	p, err := Resolve(cfg, store, name)
-	if err != nil {
-		return config.Profile{}, nil, err
-	}
-	prov, err := NewProvider(p)
-	if err != nil {
-		return config.Profile{}, nil, err
-	}
-	return p, prov, nil
-}
-
-// ProfileNames — отсортированный список имён профилей, для подсказки в /model.
-func ProfileNames(cfg config.Config) []string {
-	names := make([]string, 0, len(cfg.Profiles))
-	for name := range cfg.Profiles {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // AnswerKept — входит ли ответ из журнала в историю модели. chat.Turn

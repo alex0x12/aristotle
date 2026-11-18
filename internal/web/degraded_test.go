@@ -7,96 +7,108 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alex0x12/aristotle/internal/app"
 	"github.com/alex0x12/aristotle/internal/chat"
 	"github.com/alex0x12/aristotle/internal/config"
-	"github.com/alex0x12/aristotle/internal/keys"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
 
 // Испорченный config.json не должен гасить интерфейс: сервер переходит на
-// встроенные профили, говорит об этом полями degraded и warning и ни в одном
-// ответе не называет путь к файлу и не цитирует разбор.
+// умолчания, говорит об этом полями degraded и warning и ни в одном ответе не
+// называет путь к файлу и не цитирует разбор. Config.json старого формата (с
+// профилями) для сервера — такой же испорченный: ровно тот же путь.
 
 const (
 	configWarning = "config.json не читается — исправьте файл или сохраните настройки заново (будет перезаписан)"
-	corruptConfig = `{"default": "deepseek", "profiles": {"claude": ТУТ ПОЛОМКА`
+	corruptConfig = `{"model": "x", ТУТ ПОЛОМКА`
+	// oldFormatConfig — config.json версии с профилями: валидный JSON, но
+	// неизвестные нынешней версии поля.
+	oldFormatConfig = `{"default": "deepseek-flash", "corpus_k": 8, "profiles": {"deepseek": {"model": "deepseek-v4-pro", "prices": {"input": 1, "output": 2}, "reasoning_effort": "high"}}}`
 )
 
-func corruptConfigServer(t *testing.T) *Server {
+// brokenConfigs — всё, что для сервера «config.json не читается».
+var brokenConfigs = map[string]string{
+	"не JSON":        corruptConfig,
+	"старый формат":  oldFormatConfig,
+	"пустой файл":    ``,
+	"поле из буд.":   `{"model":"m","thinking":"max"}`,
+	"недопустимое":   `{"base_url":"ftp://x/v1"}`,
+	"бюджет строкой": `{"context_budget":"много"}`,
+}
+
+func brokenConfigServer(t *testing.T, body string) *Server {
 	t.Helper()
 	s := newTestServer(t, nil, nil)
 	if err := os.MkdirAll(filepath.Dir(s.Paths.Config), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.Paths.Config, []byte(corruptConfig), 0o600); err != nil {
+	if err := os.WriteFile(s.Paths.Config, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return s
 }
 
+func corruptConfigServer(t *testing.T) *Server { return brokenConfigServer(t, corruptConfig) }
+
 // noPathNoParser — в теле нет ни пути к файлам пользователя, ни текста разбора.
 func noPathNoParser(t *testing.T, label, body string, s *Server) {
 	t.Helper()
-	for _, leak := range []string{s.Paths.Config, s.Paths.Keys, filepath.Dir(s.Paths.Config), "invalid character", "looking for", "ПОЛОМКА", "ТУТ"} {
+	for _, leak := range []string{s.Paths.Config, s.Paths.Keys, filepath.Dir(s.Paths.Config), "invalid character", "looking for",
+		"ПОЛОМКА", "ТУТ", "unknown field", "json:", "CORRUPT"} {
 		if strings.Contains(body, leak) {
 			t.Errorf("%s: в ответе есть %q", label, leak)
 		}
 	}
 }
 
-var builtinNames = []string{"claude", "deepseek", "deepseek-flash", "openai", "openrouter"}
-
 type degradedDoc struct {
-	Default  string `json:"default"`
-	CorpusK  int    `json:"corpus_k"`
-	Degraded bool   `json:"degraded"`
-	Warning  string `json:"warning"`
-	Profiles []struct {
-		Name    string  `json:"name"`
-		Builtin bool    `json:"builtin"`
-		Key     keyView `json:"key"`
-	} `json:"profiles"`
+	BaseURL       string  `json:"base_url"`
+	Model         string  `json:"model"`
+	ContextBudget int     `json:"context_budget"`
+	Degraded      bool    `json:"degraded"`
+	Warning       string  `json:"warning"`
+	Key           keyView `json:"key"`
 }
 
-func TestCorruptConfigStateAndSettingsFallBackToBuiltin(t *testing.T) {
-	s := corruptConfigServer(t)
-	t.Setenv("DEEPSEEK_API_KEY", "zq-из-окружения-7070") // ключи окружения работают и так
-	for _, path := range []string{"/api/state", "/api/settings"} {
-		rec := do(t, s.Handler(), http.MethodGet, path, "")
-		if rec.Code != 200 {
-			t.Fatalf("%s: код %d: %s", path, rec.Code, rec.Body.String())
-		}
-		noPathNoParser(t, path, rec.Body.String(), s)
-		var d degradedDoc
-		if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
-			t.Fatal(err)
-		}
-		var names []string
-		for _, p := range d.Profiles {
-			names = append(names, p.Name)
-			if p.Name == "deepseek" && p.Key != (keyView{Source: "env", Hint: "…7070"}) {
-				t.Errorf("%s: ключ из окружения в режиме без конфига: %+v", path, p.Key)
+// (e) Любой нечитаемый config.json — и старый формат тоже: /api/state и
+// /api/settings отвечают 200 с умолчаниями, degraded и ровно этим предупреждением.
+func TestBrokenConfigStateAndSettingsFallBackToDefaults(t *testing.T) {
+	for name, body := range brokenConfigs {
+		t.Run(name, func(t *testing.T) {
+			s := brokenConfigServer(t, body)
+			for _, path := range []string{"/api/state", "/api/settings"} {
+				rec := do(t, s.Handler(), http.MethodGet, path, "")
+				if rec.Code != 200 {
+					t.Fatalf("%s: код %d: %s", path, rec.Code, rec.Body.String())
+				}
+				noPathNoParser(t, path, rec.Body.String(), s)
+				var d degradedDoc
+				if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
+					t.Fatal(err)
+				}
+				if !d.Degraded || d.Warning != configWarning {
+					t.Errorf("%s: degraded=%v, warning=%q", path, d.Degraded, d.Warning)
+				}
+				if d.BaseURL != config.DefaultBaseURL || d.Model != config.DefaultModel || d.ContextBudget != config.DefaultContextBudget {
+					t.Errorf("%s: не умолчания: %+v", path, d)
+				}
+				// Ключ при этом читается как обычно.
+				if !d.Key.Set || d.Key.Hint != "…4f1d" {
+					t.Errorf("%s: ключ в режиме без конфига: %+v", path, d.Key)
+				}
 			}
-		}
-		sort.Strings(names)
-		if strings.Join(names, ",") != strings.Join(builtinNames, ",") {
-			t.Errorf("%s: профили %v", path, names)
-		}
-		if !d.Degraded || d.Warning != configWarning || d.Default != "deepseek" || d.CorpusK != 6 {
-			t.Errorf("%s: degraded=%v, warning=%q, default=%q, corpus_k=%d", path, d.Degraded, d.Warning, d.Default, d.CorpusK)
-		}
+		})
 	}
 }
 
 // Здоровый конфиг — ни degraded, ни warning в ответе нет вовсе.
 func TestHealthyConfigHasNoDegradedKeys(t *testing.T) {
 	s := newTestServer(t, nil, nil)
-	writeConfig(t, s, `{"profiles":{"claude":{"model":"особая"}}}`)
+	writeConfig(t, s, `{"model":"особая"}`)
 	for _, path := range []string{"/api/state", "/api/settings"} {
 		var m map[string]any
 		if err := json.Unmarshal(do(t, s.Handler(), http.MethodGet, path, "").Body.Bytes(), &m); err != nil {
@@ -107,54 +119,67 @@ func TestHealthyConfigHasNoDegradedKeys(t *testing.T) {
 				t.Errorf("%s: в ответе здорового конфига есть %q", path, k)
 			}
 		}
+		if m["model"] != "особая" || m["base_url"] != config.DefaultBaseURL || m["context_budget"] != float64(config.DefaultContextBudget) {
+			t.Errorf("%s: поверх умолчаний должна лечь только модель: %v", path, m)
+		}
 	}
 }
 
-// Диалог живёт: ход с ключом из окружения проходит и пишется в журнал, как при
-// здоровом конфиге; без ключа — отказ без пути.
-func TestTurnWorksUnderCorruptConfig(t *testing.T) {
-	s := corruptConfigServer(t)
-	t.Setenv("DEEPSEEK_API_KEY", "zq-из-окружения-7070")
-	s.NewProvider = func(config.Profile) (provider.Provider, error) {
-		return &scriptedProvider{turns: [][]provider.Event{okTurn("ответ\n")}}, nil
+// Диалог живёт: ход проходит на умолчаниях и пишется в журнал, как при здоровом
+// конфиге.
+func TestTurnWorksUnderBrokenConfig(t *testing.T) {
+	for name, body := range map[string]string{"не JSON": corruptConfig, "старый формат": oldFormatConfig} {
+		t.Run(name, func(t *testing.T) {
+			s := brokenConfigServer(t, body)
+			var got app.Connection
+			s.NewProvider = func(c app.Connection) (provider.Provider, error) {
+				got = c
+				return &scriptedProvider{turns: [][]provider.Event{okTurn("ответ\n")}}, nil
+			}
+			s.Finder = fakeFinder{}
+			rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос"}`)
+			if rec.Code != 200 || !strings.Contains(rec.Body.String(), "event: done") {
+				t.Fatalf("код %d: %.300s", rec.Code, rec.Body.String())
+			}
+			want := app.Connection{BaseURL: config.DefaultBaseURL, Model: config.DefaultModel, Key: testKey, ContextBudget: config.DefaultContextBudget}
+			if got != want {
+				t.Fatalf("подключение %+v, ожидалось умолчание %+v", got, want)
+			}
+			recs, _ := chat.History{Path: filepath.Join(s.Paths.History, convID+".jsonl")}.Load()
+			if len(recs) != 2 || recs[0].Role != "user" || recs[1].Role != "assistant" || recs[1].Model != config.DefaultModel {
+				t.Fatalf("журнал %+v", recs)
+			}
+			noPathNoParser(t, "ход", rec.Body.String(), s)
+		})
 	}
-	s.Finder = fakeFinder{}
-	rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос"}`)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "event: done") {
-		t.Fatalf("код %d: %.300s", rec.Code, rec.Body.String())
-	}
-	recs, _ := chat.History{Path: filepath.Join(s.Paths.History, convID+".jsonl")}.Load()
-	if len(recs) != 2 || recs[0].Role != "user" || recs[1].Role != "assistant" || recs[1].Profile != "deepseek" {
-		t.Fatalf("журнал %+v", recs)
-	}
-	noPathNoParser(t, "ход", rec.Body.String(), s)
 }
 
 func TestTurnWithoutKeyUnderCorruptConfigHidesPath(t *testing.T) {
 	s := corruptConfigServer(t)
-	s.NewProvider = nil // настоящий конструктор: без ключа он отказывает
+	noKey(t, s)
+	s.NewProvider = nil // настоящий конструктор
 	rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос"}`)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "DEEPSEEK_API_KEY") {
+	if rec.Code != http.StatusBadRequest || strings.TrimSpace(rec.Body.String()) != app.ErrNoKey.Error() {
 		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 	}
 	noPathNoParser(t, "ход без ключа", rec.Body.String(), s)
 }
 
-// Ключи встроенных профилей правятся и при испорченном конфиге.
+// Ключ правится и при испорченном конфиге.
 func TestKeyHandlersWorkUnderCorruptConfig(t *testing.T) {
 	s := corruptConfigServer(t)
 	h := s.Handler()
-	if rec := do(t, h, http.MethodPut, "/api/keys/claude", `{"key":"sk-ant-для-теста"}`); rec.Code != 200 {
+	if rec := do(t, h, http.MethodPut, "/api/key", `{"key":"FAKE-DEGRADED-KEY-1234"}`); rec.Code != 200 {
 		t.Fatalf("PUT: код %d: %s", rec.Code, rec.Body.String())
 	}
-	if k, _ := (keys.Store{Path: s.Paths.Keys}).Get("claude"); k != "sk-ant-для-теста" {
+	if k, _ := s.keyStore().Get(); k != "FAKE-DEGRADED-KEY-1234" {
 		t.Fatalf("ключ %q", k)
 	}
-	if rec := do(t, h, http.MethodPut, "/api/keys/свой", `{"key":"x1234"}`); rec.Code != http.StatusNotFound {
-		t.Fatalf("неизвестный профиль: код %d", rec.Code)
-	}
-	if rec := do(t, h, http.MethodDelete, "/api/keys/claude", ""); rec.Code != 200 {
+	if rec := do(t, h, http.MethodDelete, "/api/key", ""); rec.Code != 200 {
 		t.Fatalf("DELETE: код %d", rec.Code)
+	}
+	if data, _ := os.ReadFile(s.Paths.Config); string(data) != corruptConfig {
+		t.Fatalf("правка ключа тронула config.json: %q", data)
 	}
 }
 
@@ -163,58 +188,62 @@ func fixedClock(s *Server) string {
 	return "config.json.bad-20261118T123456Z"
 }
 
-// Сохранение поверх испорченного файла разрешено, но файл руками правленный:
-// сначала копия рядом (0600, исходные байты), потом запись; ответ называет только
-// имя копии. Повторное сохранение копию не трогает и новой не делает.
-func TestPutSettingsOverCorruptConfigBacksItUpFirst(t *testing.T) {
-	s := corruptConfigServer(t)
-	want := fixedClock(s)
-	h := s.Handler()
-	doc := getSettings(t, h)
-	if !doc.Degraded {
-		t.Fatalf("GET не сообщил о повреждении: %+v", doc)
-	}
-	profileOf(t, &doc, "deepseek").ContextBudget = 32000 // документ с degraded/warning принимается как есть
-	rec := putSettings(t, h, doc)
-	if rec.Code != 200 {
-		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
-	}
-	noPathNoParser(t, "PUT", rec.Body.String(), s)
-	var out settingsDoc
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	if out.Backup != want || out.Degraded || out.Warning != "" {
-		t.Fatalf("backup %q, degraded %v, warning %q", out.Backup, out.Degraded, out.Warning)
-	}
-	cfg, err := config.Load(s.Paths.Config)
-	if err != nil || cfg.Profiles["deepseek"].ContextBudget != 32000 {
-		t.Fatalf("конфиг после сохранения: %+v, %v", cfg, err)
-	}
-	backup := filepath.Join(filepath.Dir(s.Paths.Config), out.Backup)
-	data, err := os.ReadFile(backup)
-	if err != nil || string(data) != corruptConfig {
-		t.Fatalf("копия %q, %v", data, err)
-	}
-	if fi, _ := os.Stat(backup); fi.Mode().Perm() != 0o600 {
-		t.Errorf("права копии %v", fi.Mode().Perm())
-	}
-	// второй PUT: файл уже в порядке — копия не нужна и не тронута
-	before, _ := os.Stat(backup)
-	var out2 settingsDoc
-	rec2 := putSettings(t, h, out)
-	json.Unmarshal(rec2.Body.Bytes(), &out2)
-	if rec2.Code != 200 || out2.Backup != "" || strings.Contains(rec2.Body.String(), `"backup"`) {
-		t.Fatalf("второй PUT: код %d, %s", rec2.Code, rec2.Body.String())
-	}
-	after, _ := os.Stat(backup)
-	if !after.ModTime().Equal(before.ModTime()) {
-		t.Error("копия тронута вторым сохранением")
-	}
-	if m, _ := filepath.Glob(s.Paths.Config + ".bad-*"); len(m) != 1 {
-		t.Errorf("копий %v", m)
+// Сохранение поверх испорченного файла разрешено, но файл руками правленный (или
+// оставшийся от версии с профилями): сначала копия рядом (0600, исходные
+// байты), потом запись в новом формате; ответ называет только имя копии.
+// Повторное сохранение копию не трогает и новой не делает.
+func TestPutSettingsOverBrokenConfigBacksItUpFirst(t *testing.T) {
+	for name, original := range map[string]string{"не JSON": corruptConfig, "старый формат": oldFormatConfig} {
+		t.Run(name, func(t *testing.T) {
+			s := brokenConfigServer(t, original)
+			want := fixedClock(s)
+			h := s.Handler()
+			if doc := getSettings(t, h); !doc.Degraded {
+				t.Fatalf("GET не сообщил о повреждении: %+v", doc)
+			}
+			rec := putSettings(t, h, `{"base_url":"https://openrouter.ai/api/v1","model":"anthropic/claude-opus-5","context_budget":32000}`)
+			if rec.Code != 200 {
+				t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+			}
+			noPathNoParser(t, "PUT", rec.Body.String(), s)
+			var out settingsDoc
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.Backup != want || out.Degraded || out.Warning != "" || out.Model != "anthropic/claude-opus-5" {
+				t.Fatalf("backup %q, degraded %v, warning %q, model %q", out.Backup, out.Degraded, out.Warning, out.Model)
+			}
+			cfg, err := config.Load(s.Paths.Config)
+			if err != nil || cfg != (config.Config{BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-opus-5", ContextBudget: 32000}) {
+				t.Fatalf("конфиг после сохранения: %+v, %v", cfg, err)
+			}
+			backup := filepath.Join(filepath.Dir(s.Paths.Config), out.Backup)
+			data, err := os.ReadFile(backup)
+			if err != nil || string(data) != original {
+				t.Fatalf("копия %q, %v", data, err)
+			}
+			if fi, _ := os.Stat(backup); fi.Mode().Perm() != 0o600 {
+				t.Errorf("права копии %v", fi.Mode().Perm())
+			}
+			// второй PUT: файл уже в порядке — копия не нужна и не тронута
+			before, _ := os.Stat(backup)
+			rec2 := putSettings(t, h, `{"base_url":"https://openrouter.ai/api/v1","model":"anthropic/claude-opus-5","context_budget":16000}`)
+			if rec2.Code != 200 || strings.Contains(rec2.Body.String(), `"backup"`) {
+				t.Fatalf("второй PUT: код %d, %s", rec2.Code, rec2.Body.String())
+			}
+			after, _ := os.Stat(backup)
+			if !after.ModTime().Equal(before.ModTime()) {
+				t.Error("копия тронута вторым сохранением")
+			}
+			if m, _ := filepath.Glob(s.Paths.Config + ".bad-*"); len(m) != 1 {
+				t.Errorf("копий %v", m)
+			}
+		})
 	}
 }
+
+// validSettings — допустимый документ настроек для PUT.
+const validSettings = `{"base_url":"https://api.example.com/v1","model":"m","context_budget":1000}`
 
 // Копию сделать не удалось — отказ по-русски, испорченный файл не тронут.
 func TestPutSettingsRefusesWhenBackupCannotBeMade(t *testing.T) {
@@ -226,7 +255,7 @@ func TestPutSettingsRefusesWhenBackupCannotBeMade(t *testing.T) {
 			t.Fatal(err)
 		}
 		h := s.Handler()
-		rec := putSettings(t, h, getSettings(t, h))
+		rec := putSettings(t, h, validSettings)
 		if rec.Code != http.StatusConflict || !cyrillicRe.MatchString(rec.Body.String()) {
 			t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 		}
@@ -246,12 +275,11 @@ func TestPutSettingsRefusesWhenBackupCannotBeMade(t *testing.T) {
 		fixedClock(s)
 		dir := filepath.Dir(s.Paths.Config)
 		h := s.Handler()
-		doc := getSettings(t, h)
 		if err := os.Chmod(dir, 0o500); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { os.Chmod(dir, 0o700) })
-		rec := putSettings(t, h, doc)
+		rec := putSettings(t, h, validSettings)
 		if rec.Code != http.StatusInternalServerError || !cyrillicRe.MatchString(rec.Body.String()) {
 			t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 		}
@@ -267,9 +295,7 @@ func TestPutSettingsValidatesBeforeBackup(t *testing.T) {
 	s := corruptConfigServer(t)
 	fixedClock(s)
 	h := s.Handler()
-	doc := getSettings(t, h)
-	doc.CorpusK = 0
-	if rec := putSettings(t, h, doc); rec.Code != http.StatusBadRequest {
+	if rec := putSettings(t, h, `{"base_url":"ftp://x","model":"m","context_budget":1}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("код %d", rec.Code)
 	}
 	if m, _ := filepath.Glob(s.Paths.Config + ".bad-*"); len(m) != 0 {
@@ -277,12 +303,12 @@ func TestPutSettingsValidatesBeforeBackup(t *testing.T) {
 	}
 }
 
-// Оба файла испорчены: состояние открывается, у профилей — предупреждения о
-// ключах (как раньше), у ответа — о конфиге; два предупреждения, не одно общее:
-// чинятся они разными руками. Сохранение чинит config.json и не трогает keys.json.
+// Оба файла испорчены: состояние открывается, у ключа — предупреждение о
+// keys.json, у ответа — о конфиге; два предупреждения, не одно общее: чинятся
+// они разными руками. Сохранение чинит config.json и не трогает keys.json.
 func TestBothFilesCorrupt(t *testing.T) {
 	s := corruptKeysServer(t)
-	if err := os.WriteFile(s.Paths.Config, []byte(corruptConfig), 0o600); err != nil {
+	if err := os.WriteFile(s.Paths.Config, []byte(oldFormatConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fixedClock(s)
@@ -295,15 +321,10 @@ func TestBothFilesCorrupt(t *testing.T) {
 	noPathNoParser(t, "GET", rec.Body.String(), s)
 	var d degradedDoc
 	json.Unmarshal(rec.Body.Bytes(), &d)
-	if !d.Degraded || d.Warning != configWarning || len(d.Profiles) != 5 {
+	if !d.Degraded || d.Warning != configWarning || d.Key != (keyView{Warning: "keys.json не читается"}) {
 		t.Fatalf("%+v", d)
 	}
-	for _, p := range d.Profiles {
-		if p.Key != (keyView{Source: "none", Warning: "keys.json не читается"}) {
-			t.Errorf("%s: %+v", p.Name, p.Key)
-		}
-	}
-	put := putSettings(t, h, getSettings(t, h))
+	put := putSettings(t, h, validSettings)
 	if put.Code != 200 || !strings.Contains(put.Body.String(), `"backup":"config.json.bad-`) {
 		t.Fatalf("PUT: код %d: %s", put.Code, put.Body.String())
 	}
@@ -313,7 +334,7 @@ func TestBothFilesCorrupt(t *testing.T) {
 	}
 	var after degradedDoc
 	json.Unmarshal(do(t, h, http.MethodGet, "/api/settings", "").Body.Bytes(), &after)
-	if after.Degraded || after.Warning != "" || after.Profiles[0].Key.Warning != "keys.json не читается" {
+	if after.Degraded || after.Warning != "" || after.Key.Warning != "keys.json не читается" {
 		t.Fatalf("после сохранения: %+v", after)
 	}
 }

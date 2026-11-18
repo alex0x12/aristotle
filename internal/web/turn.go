@@ -1,32 +1,30 @@
 package web
 
 import (
-	"log"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
 
 	"github.com/alex0x12/aristotle/internal/app"
 	"github.com/alex0x12/aristotle/internal/chat"
-	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/persona"
 	"github.com/alex0x12/aristotle/internal/provider"
 	"github.com/alex0x12/aristotle/internal/render"
 )
 
+// turnIn — тело запроса хода. Лишние поля (например, оставшийся от версии с
+// профилями profile) читаются и игнорируются: модель одна.
 type turnIn struct {
-	Text    string `json:"text"`
-	Profile string `json:"profile"`
+	Text string `json:"text"`
 }
 
 type usageEvent struct {
 	Usage              provider.Usage `json:"usage"`
-	CostUSD            *float64       `json:"cost_usd"`
 	ContextUsed        int            `json:"context_used"`
 	ContextBudget      int            `json:"context_budget"`
 	ConversationTokens int            `json:"conversation_tokens"`
-	ConversationCost   *float64       `json:"conversation_cost_usd"`
 }
 
 func (s *Server) system() (string, error) {
@@ -43,17 +41,33 @@ func (s *Server) finder() chat.Finder {
 	return app.NewSearcher(s.Root)
 }
 
-func (s *Server) providerFor(p config.Profile) (provider.Provider, error) {
+func (s *Server) providerFor(c app.Connection) (provider.Provider, error) {
 	if s.NewProvider != nil {
-		return s.NewProvider(p)
+		return s.NewProvider(c)
 	}
-	return app.NewProvider(p)
+	return app.NewProvider(c)
+}
+
+// connection — подключение для хода: настройки с диска (испорченный
+// config.json — умолчания) и ключ из keys.json. Ошибка — готовый ответ
+// пользователю: нет ключа (app.ErrNoKey) или keys.json не читается; ни пути,
+// ни содержимого файлов в ней нет.
+func (s *Server) connection() (app.Connection, error) {
+	cfg, _ := s.loadConfig()
+	key, err := s.readKey()
+	if err != nil {
+		return app.Connection{}, errors.New(keysUnreadableText + ": ключ не прочитать")
+	}
+	if key == "" {
+		return app.Connection{}, app.ErrNoKey
+	}
+	return app.Connection{BaseURL: cfg.BaseURL, Model: cfg.Model, Key: key, ContextBudget: cfg.ContextBudget}, nil
 }
 
 // session — сессия беседы; при первом обращении восстанавливается из
-// журнала. Провайдер, бюджет и k ставятся на каждый ход: настройки могли
-// поменяться.
-func (s *Server) session(c *conv, prof config.Profile, prov provider.Provider, k int) (*chat.Session, error) {
+// журнала. Провайдер и бюджет ставятся на каждый ход: настройки могли
+// поменяться. Число глав на поиск — умолчание чата, а не настройка.
+func (s *Server) session(c *conv, conn app.Connection, prov provider.Provider) (*chat.Session, error) {
 	if c.session == nil {
 		system, err := s.system()
 		if err != nil {
@@ -66,8 +80,7 @@ func (s *Server) session(c *conv, prof config.Profile, prov provider.Provider, k
 		c.session = &chat.Session{Corpus: s.finder(), System: system, Messages: app.ResumeMessages(recs)}
 	}
 	c.session.Provider = prov
-	c.session.Budget = prof.ContextBudget
-	c.session.DefaultK = k
+	c.session.Budget = conn.ContextBudget
 	return c.session, nil
 }
 
@@ -86,20 +99,18 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.mu.Unlock()
-	s.runTurn(w, r, c, strings.TrimSpace(in.Text), in.Profile, nil)
+	s.runTurn(w, r, c, strings.TrimSpace(in.Text), nil)
 }
 
 // handleAgain отзывает последний вопрос с ответом и задаёт вопрос снова.
 // Журнал только дописывается, поэтому отзыв — запись retract. Её пишет
-// runTurn, когда ход точно начнётся: отказ раньше (нет ключа, нет такого
-// профиля) не должен прятать вопрос из беседы.
+// runTurn, когда ход точно начнётся: отказ раньше (нет ключа, keys.json
+// не читается) не должен прятать вопрос из беседы. Тело запроса «ещё раз» не читается.
 func (s *Server) handleAgain(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.convFromPath(w, r)
 	if !ok {
 		return
 	}
-	var in turnIn
-	readJSON(r, &in) // тело необязательно: пустое — профиль по умолчанию
 	if !c.mu.TryLock() {
 		http.Error(w, "в этой беседе уже идёт ход", http.StatusConflict)
 		return
@@ -123,7 +134,7 @@ func (s *Server) handleAgain(w http.ResponseWriter, r *http.Request) {
 	// Откатанного хода в сессии нет: снимать с неё нечего, иначе «ещё раз»
 	// после сбоя выбросило бы предыдущий, удавшийся ход.
 	inSession := app.LastTurnKept(recs)
-	s.runTurn(w, r, c, last, in.Profile, func() error {
+	s.runTurn(w, r, c, last, func() error {
 		if err := c.history.Append(chat.Record{Role: chat.RoleRetract}); err != nil {
 			return err
 		}
@@ -137,22 +148,14 @@ func (s *Server) handleAgain(w http.ResponseWriter, r *http.Request) {
 
 // runTurn ведёт один ход потоком событий. retract (может быть nil) вызывается
 // после всех проверок, перед первой записью в журнал.
-func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, profileName string, retract func() error) {
-	cfg, store, _ := s.loadConfig() // испорченный config.json — встроенные профили, ключи окружения действуют
-	// s.resolve, а не app.Resolve: ошибка чтения keys.json в app несёт путь к
-	// файлу и знак из него, а в диалог идёт фиксированный текст.
-	prof, err := s.resolve(cfg, store, profileName)
-	if err != nil {
-		msg := err.Error()
-		if ke, ok := isKeysUnreadable(err); ok {
-			log.Printf("keys.json: %v", ke.cause)
-			msg += ": ключ профиля не прочитать"
-		}
-		http.Error(w, msg, http.StatusBadRequest)
+func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text string, retract func() error) {
+	conn, err := s.connection()
+	if err != nil { // нет ключа или keys.json не читается: журнал не тронут
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	prov, err := s.providerFor(prof)
-	if err != nil { // чаще всего — нет ключа
+	prov, err := s.providerFor(conn)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -162,7 +165,7 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, 
 			return
 		}
 	}
-	sess, err := s.session(c, prof, prov, cfg.CorpusK)
+	sess, err := s.session(c, conn, prov)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -215,18 +218,18 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, 
 	}
 	emit(asm.Flush())
 
-	rec := chat.Record{Role: "assistant", Profile: prof.Name, Model: prof.Model, Quotes: app.QuotesOf(blocks)}
+	rec := chat.Record{Role: "assistant", Model: conn.Model, Quotes: app.QuotesOf(blocks)}
 	// Расход уходит в журнал и в поток как вернул Turn. После ошибки или
 	// остановки он с Known = false: числа завершённых запросов остаются, но
-	// точной суммой не считаются и в цену не идут (Cost при Known = false — nil).
+	// точной суммой не считаются.
 	usage := res.Usage
-	rec.Usage, rec.CostUSD = &usage, app.Cost(prof.Prices, usage)
+	rec.Usage = &usage
 	sendUsage := func() convSummary {
 		recs, _ := c.history.Load()
 		sum := summarize(c.id, recs)
-		out.send("usage", usageEvent{Usage: usage, CostUSD: rec.CostUSD,
+		out.send("usage", usageEvent{Usage: usage,
 			ContextUsed: sess.LastPrompt, ContextBudget: sess.Budget,
-			ConversationTokens: sum.Tokens, ConversationCost: sum.CostUSD})
+			ConversationTokens: sum.Tokens})
 		return sum
 	}
 	if err != nil {

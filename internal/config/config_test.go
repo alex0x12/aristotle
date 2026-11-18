@@ -1,360 +1,275 @@
 package config
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
+	"strings"
 	"testing"
 )
 
-func TestBuiltinHasFiveProfiles(t *testing.T) {
-	c := Builtin()
-	for _, name := range []string{"claude", "deepseek", "deepseek-flash", "openai", "openrouter"} {
-		if _, ok := c.Profiles[name]; !ok {
-			t.Fatalf("нет встроенного профиля %q", name)
-		}
-	}
-	if len(c.Profiles) != 5 {
-		t.Fatalf("встроенных профилей %d, ожидалось 5", len(c.Profiles))
-	}
-	if c.Default != "deepseek" {
-		t.Fatalf("Default = %q, ожидался deepseek", c.Default)
-	}
-}
-
-// deepseek-flash — быстрая модель того же DeepSeek: тот же адрес и та же
-// переменная ключа, что у deepseek (переменная общая, ключ в keys.json — свой
-// у каждого профиля), без рассуждения, цен и температуры.
-func TestDeepseekFlashProfile(t *testing.T) {
-	p, ok := Builtin().Profiles["deepseek-flash"]
-	if !ok {
-		t.Fatal("нет встроенного профиля deepseek-flash")
-	}
-	want := Profile{
-		Kind: KindOpenAI, BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-v4-flash",
-		KeyEnv: "DEEPSEEK_API_KEY", ContextBudget: DefaultContextBudget,
-	}
-	if !reflect.DeepEqual(p, want) {
-		t.Fatalf("профиль %+v, ожидался %+v", p, want)
-	}
-	ds := Builtin().Profiles["deepseek"]
-	if p.BaseURL != ds.BaseURL || p.KeyEnv != ds.KeyEnv {
-		t.Fatal("адрес и переменная ключа должны совпадать с deepseek")
-	}
-}
-
-// Изменённый встроенный профиль пишется одной разницей, нетронутый — никак.
-func TestSaveDeepseekFlashWritesOnlyTheDifference(t *testing.T) {
-	c := Builtin()
-	f := c.Profiles["deepseek-flash"]
-	f.ContextBudget = 32000
-	c.Profiles["deepseek-flash"] = f
+func writeCfg(t *testing.T, body string) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := Save(path, c); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(path)
-	var raw struct {
-		Profiles map[string]map[string]any `json:"profiles"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("%v: %s", err, data)
-	}
-	if len(raw.Profiles) != 1 || len(raw.Profiles["deepseek-flash"]) != 1 || raw.Profiles["deepseek-flash"]["context_budget"] != float64(32000) {
-		t.Fatalf("записано не одна разница: %s", data)
-	}
-	got, err := Load(path)
-	if err != nil || !reflect.DeepEqual(got, c) {
-		t.Fatalf("круг не замкнулся: %+v, %v", got, err)
-	}
-}
-
-func TestClaudeProfileDefaults(t *testing.T) {
-	p := Builtin().Profiles["claude"]
-	if p.Kind != KindAnthropic {
-		t.Fatalf("Kind = %q, ожидался %q", p.Kind, KindAnthropic)
-	}
-	if p.Model != "claude-opus-5" {
-		t.Fatalf("Model = %q, ожидался claude-opus-5", p.Model)
-	}
-}
-
-func TestOpenAIProfileHasReasoning(t *testing.T) {
-	p := Builtin().Profiles["openai"]
-	if p.Kind != KindOpenAI {
-		t.Fatalf("Kind = %q, ожидался %q", p.Kind, KindOpenAI)
-	}
-	if !p.Reasoning {
-		t.Fatalf("Reasoning = %v, ожидалось true (gpt-5.6 — рассуждающая модель)", p.Reasoning)
-	}
-}
-
-func TestResolveEmptyGivesDefault(t *testing.T) {
-	p, err := Builtin().Resolve("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Name != "deepseek" {
-		t.Fatalf("Name = %q", p.Name)
-	}
-}
-
-func TestResolveUnknownFails(t *testing.T) {
-	if _, err := Builtin().Resolve("gpt-9"); err == nil {
-		t.Fatal("ожидалась ошибка для неизвестного профиля")
-	}
-}
-
-func TestLoadMissingFileIsNotAnError(t *testing.T) {
-	c, err := Load(filepath.Join(t.TempDir(), "нет-такого.json"))
-	if err != nil {
-		t.Fatalf("отсутствие файла не должно быть ошибкой: %v", err)
-	}
-	if len(c.Profiles) == 0 {
-		t.Fatal("встроенные профили должны остаться")
-	}
-}
-
-func TestLoadOverridesModel(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	body := `{"default":"deepseek","profiles":{"claude":{"model":"claude-sonnet-5"}}}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
+	return path
+}
+
+func TestDefaults(t *testing.T) {
+	d := Default()
+	want := Config{BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-flash", ContextBudget: 128000}
+	if d != want {
+		t.Fatalf("Default() = %+v, ожидалось %+v", d, want)
 	}
-	if c.Default != "deepseek" {
-		t.Fatalf("Default = %q", c.Default)
+	if DefaultBaseURL != want.BaseURL || DefaultModel != want.Model || DefaultContextBudget != 128000 || DefaultCorpusK != 6 {
+		t.Fatal("константы умолчаний разошлись с Default()")
 	}
-	if got := c.Profiles["claude"].Model; got != "claude-sonnet-5" {
-		t.Fatalf("Model = %q", got)
-	}
-	if got := c.Profiles["claude"].Kind; got != KindAnthropic {
-		t.Fatalf("Kind затёрт: %q", got)
+	if err := d.Validate(); err != nil {
+		t.Fatalf("умолчания не проходят проверку: %v", err)
 	}
 }
 
-func TestLoadOverridesModelKeepsBaseURLAndKeyEnv(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	body := `{"profiles":{"openai":{"model":"gpt-5.5"}}}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	openai := c.Profiles["openai"]
-	if got := openai.Model; got != "gpt-5.5" {
-		t.Fatalf("Model = %q, ожидалось gpt-5.5", got)
-	}
-	if got := openai.BaseURL; got != "https://api.openai.com/v1" {
-		t.Fatalf("BaseURL затёрт: %q", got)
-	}
-	if got := openai.KeyEnv; got != "OPENAI_API_KEY" {
-		t.Fatalf("KeyEnv затёрт: %q", got)
+func TestLoadMissingFileGivesDefaults(t *testing.T) {
+	c, err := Load(filepath.Join(t.TempDir(), "nope.json"))
+	if err != nil || c != Default() {
+		t.Fatalf("Load(нет файла) = %+v, %v", c, err)
 	}
 }
 
-func TestLoadNewProfileFromFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	body := `{"profiles":{"custom":{"kind":"openai","base_url":"https://custom.api.com","model":"custom-model","key_env":"CUSTOM_KEY"}}}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
+// Файл накладывается ПОВЕРХ умолчаний: опущенное поле остаётся умолчанием, а
+// явный ноль бюджета («без урезания») — нулём.
+func TestLoadOverlaysDefaults(t *testing.T) {
+	cases := []struct {
+		name, body string
+		want       Config
+	}{
+		{"пустой объект", `{}`, Default()},
+		{"только модель", `{"model":"deepseek-v4-pro"}`,
+			Config{BaseURL: DefaultBaseURL, Model: "deepseek-v4-pro", ContextBudget: DefaultContextBudget}},
+		{"только адрес", `{"base_url":"https://openrouter.ai/api/v1"}`,
+			Config{BaseURL: "https://openrouter.ai/api/v1", Model: DefaultModel, ContextBudget: DefaultContextBudget}},
+		{"явный ноль бюджета", `{"context_budget":0}`,
+			Config{BaseURL: DefaultBaseURL, Model: DefaultModel, ContextBudget: 0}},
+		{"всё", `{"base_url":"http://localhost:11434/v1","model":"qwen3.5:4b","context_budget":32000}`,
+			Config{BaseURL: "http://localhost:11434/v1", Model: "qwen3.5:4b", ContextBudget: 32000}},
+		{"пробелы вокруг модели срезаются", `{"model":"  m1  "}`,
+			Config{BaseURL: DefaultBaseURL, Model: "m1", ContextBudget: DefaultContextBudget}},
 	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	custom, ok := c.Profiles["custom"]
-	if !ok {
-		t.Fatal("профиль custom не создан из файла")
-	}
-	if got := custom.Kind; got != KindOpenAI {
-		t.Fatalf("Kind = %q, ожидался %q", got, KindOpenAI)
-	}
-	if got := custom.Model; got != "custom-model" {
-		t.Fatalf("Model = %q", got)
-	}
-	// Проверяем, что профиль разрешается
-	if _, err := c.Resolve("custom"); err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-}
-
-func TestLoadNewProfileMissingKindFails(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	body := `{"profiles":{"bad":{"model":"some-model","key_env":"SOME_KEY"}}}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Загрузка должна пройти, но Resolve должна дать ошибку
-	if _, err := c.Resolve("bad"); err == nil {
-		t.Fatal("ожидалась ошибка при отсутствии kind")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Load(writeCfg(t, tc.body))
+			if err != nil || got != tc.want {
+				t.Fatalf("Load = %+v, %v; ожидалось %+v", got, err, tc.want)
+			}
+		})
 	}
 }
 
-func TestLoadReasoningFalseOverridesTrue(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	body := `{"profiles":{"openai":{"reasoning":false}}}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
+// Старый формат (профили) и поле из будущей версии — ошибка с названием поля:
+// именно она отправляет веб-интерфейс в запасной режим с предупреждением, а
+// командную строку — на умолчания с одной строкой на stderr.
+func TestLoadRejectsOldFormatAndUnknownFields(t *testing.T) {
+	cases := []struct{ name, body, field string }{
+		{"profiles", `{"default":"deepseek","profiles":{"deepseek":{"model":"x"}}}`, "default"},
+		{"только profiles", `{"profiles":{}}`, "profiles"},
+		{"corpus_k", `{"corpus_k":6}`, "corpus_k"},
+		{"будущее поле", `{"model":"x","thinking":"max"}`, "thinking"},
 	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	openai := c.Profiles["openai"]
-	if openai.Reasoning {
-		t.Fatalf("Reasoning = %v, ожидалось false (явный false должен выключить встроенный true)", openai.Reasoning)
-	}
-}
-
-func TestLoadReasoningAbsentDoesNotChange(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	body := `{"profiles":{"openai":{"model":"gpt-5.5"}}}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	openai := c.Profiles["openai"]
-	if !openai.Reasoning {
-		t.Fatalf("Reasoning = %v, ожидалось true (отсутствие поля должно сохранить встроенное значение)", openai.Reasoning)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeCfg(t, tc.body))
+			if err == nil {
+				t.Fatal("ожидалась ошибка")
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("ошибка не называет поле %q: %v", tc.field, err)
+			}
+		})
 	}
 }
 
-func TestLoadOverridesMaxOutputTokens(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	body := `{"profiles":{"openrouter":{"max_output_tokens":4096}}}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Profiles["openrouter"].MaxOutputTokens; got != 4096 {
-		t.Fatalf("MaxOutputTokens = %d, ожидалось 4096", got)
-	}
-}
-
-func TestLoadMaxOutputTokensAbsentDoesNotChange(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-	body := `{"profiles":{"openrouter":{"model":"x"}}}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Profiles["openrouter"].MaxOutputTokens; got != 0 {
-		t.Fatalf("MaxOutputTokens = %d, ожидалось 0 (умолчание провайдера)", got)
+func TestLoadRejectsGarbage(t *testing.T) {
+	for name, body := range map[string]string{
+		"пустой файл":    ``,
+		"пробелы":        "  \n",
+		"не JSON":        `not json`,
+		"массив":         `[]`,
+		"строка":         `"x"`,
+		"лишнее после":   `{"model":"x"} {"model":"y"}`,
+		"неверный тип":   `{"context_budget":"много"}`,
+		"оборванный":     `{"model":`,
+		"бюджет дробный": `{"context_budget":1.5}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(writeCfg(t, body)); err == nil {
+				t.Fatalf("%q должен читаться с ошибкой", body)
+			}
+		})
 	}
 }
 
-func TestBuiltinProfilesHaveNoMaxOutputTokensOverride(t *testing.T) {
-	c := Builtin()
-	for name, p := range c.Profiles {
-		if p.MaxOutputTokens != 0 {
-			t.Errorf("встроенный профиль %q имеет MaxOutputTokens=%d, ожидалось 0 (умолчание)",
-				name, p.MaxOutputTokens)
-		}
+// Файл, прочитанный без ошибки разбора, но с недопустимыми значениями, тоже
+// ошибка: Load проверяет то же, что веб при сохранении.
+func TestLoadValidatesValues(t *testing.T) {
+	for name, body := range map[string]string{
+		"пустая модель":  `{"model":""}`,
+		"отрицательный":  `{"context_budget":-1}`,
+		"ftp":            `{"base_url":"ftp://x/v1"}`,
+		"пустой адрес":   `{"base_url":""}`,
+		"без хоста":      `{"base_url":"https:///v1"}`,
+		"логин в адресе": `{"base_url":"https://user:pw@api.example.com/v1"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(writeCfg(t, body)); err == nil {
+				t.Fatalf("%q должен отвергаться", body)
+			}
+		})
 	}
 }
 
-func TestAPIKeyMissing(t *testing.T) {
-	p := Profile{Name: "x", KeyEnv: "ARISTOTLE_TEST_MISSING_KEY"}
-	os.Unsetenv(p.KeyEnv)
-	if _, err := p.APIKey(); err == nil {
-		t.Fatal("ожидалась ошибка при отсутствии переменной")
+func TestValidate(t *testing.T) {
+	ok := Default()
+	long := func(n int) string { return strings.Repeat("a", n) }
+	cases := []struct {
+		name  string
+		mod   func(*Config)
+		field string // пусто — конфиг допустим
+	}{
+		{"умолчания", func(*Config) {}, ""},
+		{"бюджет 0", func(c *Config) { c.ContextBudget = 0 }, ""},
+		{"бюджет верхний предел", func(c *Config) { c.ContextBudget = 10_000_000 }, ""},
+		{"бюджет выше предела", func(c *Config) { c.ContextBudget = 10_000_001 }, "context_budget"},
+		{"бюджет отрицательный", func(c *Config) { c.ContextBudget = -1 }, "context_budget"},
+		{"модель пустая", func(c *Config) { c.Model = "" }, "model"},
+		{"модель из пробелов", func(c *Config) { c.Model = "   " }, "model"},
+		{"модель 200 знаков", func(c *Config) { c.Model = long(200) }, ""},
+		{"модель 201 знак", func(c *Config) { c.Model = long(201) }, "model"},
+		{"модель 200 рун по-русски", func(c *Config) { c.Model = strings.Repeat("я", 200) }, ""},
+		{"модель с переводом строки", func(c *Config) { c.Model = "a\nb" }, "model"},
+		{"модель с NUL", func(c *Config) { c.Model = "a\x00b" }, "model"},
+		{"модель с табуляцией", func(c *Config) { c.Model = "a\tb" }, "model"},
+		{"модель с пробелом внутри", func(c *Config) { c.Model = "gpt 5" }, ""},
+		{"адрес пустой", func(c *Config) { c.BaseURL = "" }, "base_url"},
+		{"адрес без схемы", func(c *Config) { c.BaseURL = "api.deepseek.com/v1" }, "base_url"},
+		{"адрес ftp", func(c *Config) { c.BaseURL = "ftp://api.example.com" }, "base_url"},
+		{"адрес javascript", func(c *Config) { c.BaseURL = "javascript:alert(1)" }, "base_url"},
+		{"адрес file", func(c *Config) { c.BaseURL = "file:///etc/passwd" }, "base_url"},
+		{"адрес без хоста", func(c *Config) { c.BaseURL = "https://" }, "base_url"},
+		{"адрес только порт", func(c *Config) { c.BaseURL = "http://:8080/v1" }, "base_url"},
+		{"адрес с логином", func(c *Config) { c.BaseURL = "https://u@api.example.com/v1" }, "base_url"},
+		{"адрес с логином и паролем", func(c *Config) { c.BaseURL = "https://u:p@api.example.com/v1" }, "base_url"},
+		{"адрес с пробелом", func(c *Config) { c.BaseURL = "https://api.example.com/v 1" }, "base_url"},
+		{"адрес с переводом строки", func(c *Config) { c.BaseURL = "https://api.example.com/v1\n" }, "base_url"},
+		{"адрес с NUL", func(c *Config) { c.BaseURL = "https://api.example.com/\x00" }, "base_url"},
+		{"адрес 2048 знаков", func(c *Config) { c.BaseURL = "https://a.example/" + long(2048-len("https://a.example/")) }, ""},
+		{"адрес 2049 знаков", func(c *Config) { c.BaseURL = "https://a.example/" + long(2049-len("https://a.example/")) }, "base_url"},
+		{"адрес http локальный", func(c *Config) { c.BaseURL = "http://127.0.0.1:11434/v1" }, ""},
+		{"адрес https openrouter", func(c *Config) { c.BaseURL = "https://openrouter.ai/api/v1" }, ""},
+		{"адрес с хвостовым слэшем", func(c *Config) { c.BaseURL = "https://api.example.com/v1/" }, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := ok
+			tc.mod(&c)
+			err := c.Validate()
+			switch {
+			case tc.field == "" && err != nil:
+				t.Fatalf("допустимый конфиг отвергнут: %v", err)
+			case tc.field != "" && err == nil:
+				t.Fatal("недопустимый конфиг принят")
+			case tc.field != "" && !strings.HasPrefix(err.Error(), tc.field+":"):
+				t.Fatalf("ошибка должна начинаться с названия поля %q: %v", tc.field, err)
+			}
+		})
 	}
 }
 
-func TestBuiltinBudgetAndCorpusK(t *testing.T) {
-	c := Builtin()
-	if c.CorpusK != 6 {
-		t.Fatalf("CorpusK = %d", c.CorpusK)
+// Ошибка проверки не повторяет присланное значение: в адресе мог оказаться
+// пароль, а в модели — вставленный по ошибке ключ.
+func TestValidateErrorDoesNotEchoValue(t *testing.T) {
+	c := Default()
+	c.BaseURL = "https://user:SECRET-PASSWORD-777@api.example.com/v1"
+	if err := c.Validate(); err == nil || strings.Contains(err.Error(), "SECRET-PASSWORD-777") {
+		t.Fatalf("ошибка повторяет значение: %v", err)
 	}
-	for name, p := range c.Profiles {
-		if p.ContextBudget != 64000 || p.Prices != nil {
-			t.Errorf("%s: бюджет %d, цены %+v", name, p.ContextBudget, p.Prices)
-		}
-	}
-}
-
-func TestSaveBuiltinWritesNothing(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := Save(path, Builtin()); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(path)
-	if string(data) != "{}\n" {
-		t.Fatalf("config.json = %q, ожидалось {}", data)
+	c = Default()
+	c.Model = "sk-FAKE-KEY-123\nx"
+	if err := c.Validate(); err == nil || strings.Contains(err.Error(), "sk-FAKE-KEY-123") {
+		t.Fatalf("ошибка повторяет значение: %v", err)
 	}
 }
 
 func TestSaveLoadRoundTrip(t *testing.T) {
-	c := Builtin()
-	claude := c.Profiles["claude"]
-	claude.Model = "claude-opus-5-5"
-	temp := 0.4
-	claude.Temperature = &temp
-	claude.Prices = &Prices{Input: 15, Output: 75, CacheRead: 1.5, CacheWrite: 18.75}
-	c.Profiles["claude"] = claude
-	ds := c.Profiles["deepseek"]
-	ds.ContextBudget = 0
-	c.Profiles["deepseek"] = ds
-	c.Profiles["local"] = Profile{
-		Kind: KindOpenAI, BaseURL: "http://127.0.0.1:11434/v1", Model: "qwen3",
-		Reasoning: true, ReasoningEffort: "low", ContextBudget: 32000,
-	}
-	c.Default = "local"
-	c.CorpusK = 4
-
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := Save(path, c); err != nil {
-		t.Fatal(err)
-	}
-	got, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, c) {
-		t.Fatalf("Load(Save(c)) != c\nполучено: %+v\nожидалось: %+v", got, c)
-	}
-	st, _ := os.Stat(path)
-	if st.Mode().Perm() != 0o600 {
-		t.Fatalf("права %v", st.Mode().Perm())
+	for _, c := range []Config{
+		Default(),
+		{BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-opus-5", ContextBudget: 0},
+		{BaseURL: "http://localhost:11434/v1", Model: "qwen3.5:4b", ContextBudget: 10_000_000},
+	} {
+		path := filepath.Join(t.TempDir(), "sub", "config.json")
+		if err := Save(path, c); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Load(path)
+		if err != nil || got != c {
+			t.Fatalf("Load(Save(%+v)) = %+v, %v", c, got, err)
+		}
 	}
 }
 
-func TestAPIKeyEnvBeatsFile(t *testing.T) {
-	p := Profile{Name: "x", KeyEnv: "ARISTOTLE_TEST_KEY_ORDER", Key: "из-файла"}
-	t.Setenv(p.KeyEnv, "из-окружения")
-	if k, _ := p.APIKey(); k != "из-окружения" {
-		t.Fatalf("ключ = %q", k)
+// Save пишет документ целиком — все три поля, в том числе равные умолчаниям, —
+// чтобы файл читался сам по себе и не менялся с умолчаниями программы.
+func TestSaveWritesFullDocumentWithMode0600(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Save(path, Default()); err != nil {
+		t.Fatal(err)
 	}
-	t.Setenv(p.KeyEnv, "")
-	if k, _ := p.APIKey(); k != "из-файла" {
-		t.Fatalf("ключ = %q", k)
+	data, _ := os.ReadFile(path)
+	for _, field := range []string{`"base_url"`, `"model"`, `"context_budget"`} {
+		if !strings.Contains(string(data), field) {
+			t.Fatalf("в файле нет %s:\n%s", field, data)
+		}
+	}
+	st, err := os.Stat(path)
+	if err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("права %v, %v", st.Mode().Perm(), err)
+	}
+	// Бюджет 0 («без урезания») тоже пишется явно, а не пропадает как пустой.
+	c := Default()
+	c.ContextBudget = 0
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(path)
+	if !strings.Contains(string(data), `"context_budget": 0`) {
+		t.Fatalf("нулевой бюджет не записан:\n%s", data)
+	}
+}
+
+// Недопустимый конфиг не записывается и существующий файл не трогает.
+func TestSaveRefusesInvalidAndKeepsFile(t *testing.T) {
+	path := writeCfg(t, `{"model":"keep-me"}`)
+	bad := Default()
+	bad.BaseURL = "ftp://x"
+	if err := Save(path, bad); err == nil {
+		t.Fatal("недопустимый конфиг записан")
+	}
+	if data, _ := os.ReadFile(path); string(data) != `{"model":"keep-me"}` {
+		t.Fatalf("файл изменился: %s", data)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) != 1 {
+		t.Fatalf("в каталоге лишние файлы: %v", entries)
+	}
+}
+
+// Окружение на конфиг не влияет: ни ключей, ни адресов оттуда не берётся.
+func TestLoadIgnoresEnvironment(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "FAKE-ENV-KEY")
+	t.Setenv("OPENAI_BASE_URL", "https://evil.example/v1")
+	t.Setenv("ANTHROPIC_API_KEY", "FAKE-ENV-KEY")
+	c, err := Load(filepath.Join(t.TempDir(), "none.json"))
+	if err != nil || c != Default() {
+		t.Fatalf("Load = %+v, %v", c, err)
 	}
 }

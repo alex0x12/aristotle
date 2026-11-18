@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,5 +77,50 @@ func TestOldAnswerWithoutQuotesIsMarkedUnknown(t *testing.T) {
 	})
 	if len(its) != 2 || !its[1].QuotesUnknown || its[1].Blocks[0].Kind != "quote" {
 		t.Fatalf("ответ из журнала без сверки: %+v", its)
+	}
+}
+
+// Беседа и список отдаются без цены и профиля, даже если журнал прежней версии
+// их хранит; модель и расход остаются.
+func TestConversationJSONHasNoCostOrProfile(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	writeRawJournal(t, s.Paths.History, convID,
+		`{"time":"2026-11-10T10:00:00Z","role":"user","text":"Что такое добродетель?"}`,
+		`{"time":"2026-11-10T10:00:05Z","role":"assistant","text":"Надвое.\n","profile":"deepseek-pro","model":"deepseek-v4-pro","usage":{"input":2000,"output":300,"cache_read":16000,"cache_write":120,"known":true},"cost_usd":0.0031,"stop_reason":"end"}`)
+	h := s.Handler()
+
+	get := do(t, h, http.MethodGet, "/api/conversations/"+convID, "")
+	list := do(t, h, http.MethodGet, "/api/conversations", "")
+	if get.Code != 200 || list.Code != 200 {
+		t.Fatalf("коды %d, %d", get.Code, list.Code)
+	}
+	for name, body := range map[string]string{"беседа": get.Body.String(), "список": list.Body.String()} {
+		for _, gone := range []string{"cost", "profile", "0.0031"} {
+			if strings.Contains(body, gone) {
+				t.Errorf("%s: в ответе есть %q: %s", name, gone, body)
+			}
+		}
+	}
+	var conv struct {
+		ID     string `json:"id"`
+		Tokens int    `json:"tokens"`
+		Items  []struct {
+			Type  string         `json:"type"`
+			Model string         `json:"model"`
+			Usage map[string]any `json:"usage"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(get.Body.Bytes(), &conv); err != nil || len(conv.Items) != 2 {
+		t.Fatalf("беседа %s, %v", get.Body.String(), err)
+	}
+	if a := conv.Items[1]; a.Model != "deepseek-v4-pro" || a.Usage["input"] != 2000.0 || a.Usage["cache_read"] != 16000.0 {
+		t.Fatalf("ответ ассистента %+v", a)
+	}
+	var m []map[string]any
+	if err := json.Unmarshal(list.Body.Bytes(), &m); err != nil || len(m) != 1 {
+		t.Fatalf("список %s, %v", list.Body.String(), err)
+	}
+	if got := keysOfMap(m[0]); got != "id,title,tokens,updated" {
+		t.Fatalf("поля элемента списка: %s", got)
 	}
 }

@@ -167,3 +167,21 @@ func TestExportDispositionIsSafeForHostileTitle(t *testing.T) {
 		}
 	}
 }
+
+// (h) В выгрузке нет цены, расхода и названия модели — даже если журнал
+// прежней версии их хранит: беседа для чтения вне интерфейса, а не отчёт.
+func TestExportHasNoCostUsageOrModel(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	writeRawJournal(t, s.Paths.History, convID,
+		`{"time":"2026-11-10T10:00:00Z","role":"user","text":"Что такое добродетель?"}`,
+		`{"time":"2026-11-10T10:00:05Z","role":"assistant","text":"Надвое.\n","profile":"deepseek-pro","model":"deepseek-v4-pro","usage":{"input":2000,"output":300,"cache_read":16000,"cache_write":120,"known":true},"cost_usd":0.0031,"stop_reason":"end"}`)
+	rec := do(t, s.Handler(), http.MethodGet, "/api/conversations/"+convID+"/export.md", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Надвое.") {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	for _, gone := range []string{"$", "0.0031", "cost", "deepseek", "2000", "16000", "токен", "profile"} {
+		if strings.Contains(rec.Body.String(), gone) || strings.Contains(rec.Header().Get("Content-Disposition"), gone) {
+			t.Errorf("в выгрузке есть %q:\n%s", gone, rec.Body.String())
+		}
+	}
+}

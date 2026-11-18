@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/alex0x12/aristotle/internal/keys"
 )
 
 func TestGuardRejectsForeignHost(t *testing.T) {
@@ -102,60 +100,45 @@ func TestStateNeverShowsKeys(t *testing.T) {
 		envSecret  = "zq-выдуманный-секрет-из-окружения-7731"
 		fileSecret = "zq-выдуманный-секрет-из-файла-4096"
 	)
-	s := newTestServer(t, nil, nil) // обнуляет окружение с ключами
-	t.Setenv("DEEPSEEK_API_KEY", envSecret)
-	if err := (keys.Store{Path: s.Paths.Keys}).Set("claude", fileSecret); err != nil {
+	s := newTestServer(t, nil, nil)
+	// Окружение сервер не читает: ключи из него в ответ попасть не могут.
+	for _, name := range []string{"DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"} {
+		t.Setenv(name, envSecret)
+	}
+	if err := s.keyStore().Set(fileSecret); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := do(t, s.Handler(), http.MethodGet, "/api/state", "")
-	body := rec.Body.String()
-	if rec.Code != 200 {
-		t.Fatalf("код %d, ожидался 200", rec.Code)
-	}
+	for _, path := range []string{"/api/state", "/api/settings"} {
+		rec := do(t, s.Handler(), http.MethodGet, path, "")
+		body := rec.Body.String()
+		if rec.Code != 200 {
+			t.Fatalf("%s: код %d, ожидался 200", path, rec.Code)
+		}
 
-	// Ключ целиком и всё, кроме последних четырёх символов, наружу не идёт;
-	// пятый с конца символ вместе с подсказкой уже указал бы на лишнее.
-	for name, secret := range map[string]string{"из окружения": envSecret, "из файла": fileSecret} {
-		r := []rune(secret)
-		for _, leak := range []string{secret, string(r[:len(r)-4]), string(r[len(r)-5:])} {
-			if strings.Contains(body, leak) {
-				t.Errorf("ключ %s: в ответе есть %d символов ключа, наружу идут только последние четыре", name, len([]rune(leak)))
+		// Ключ целиком и всё, кроме последних четырёх символов, наружу не идёт;
+		// пятый с конца символ вместе с подсказкой уже указал бы на лишнее.
+		for name, secret := range map[string]string{"из окружения": envSecret, "из файла": fileSecret} {
+			r := []rune(secret)
+			for _, leak := range []string{secret, string(r[:len(r)-4]), string(r[len(r)-5:])} {
+				if strings.Contains(body, leak) {
+					t.Errorf("%s, ключ %s: в ответе есть %d символов ключа, наружу идут только последние четыре", path, name, len([]rune(leak)))
+				}
 			}
 		}
-	}
-	if strings.Contains(body, "секрет") {
-		t.Error("в ответе есть слово из ключа")
-	}
-
-	var state struct {
-		Profiles []struct {
-			Name string  `json:"name"`
-			Key  keyView `json:"key"`
-		} `json:"profiles"`
-	}
-	if err := json.Unmarshal([]byte(body), &state); err != nil {
-		t.Fatalf("ответ не разобрать: %v", err)
-	}
-	got := map[string]keyView{}
-	for _, p := range state.Profiles {
-		got[p.Name] = p.Key
-	}
-	want := map[string]keyView{
-		"deepseek": {Source: "env", Hint: "…7731"},
-		// переменная ключа общая с deepseek, поэтому и источник, и подсказка те же
-		"deepseek-flash": {Source: "env", Hint: "…7731"},
-		"claude":         {Source: "file", Hint: "…4096"},
-		"openai":         {Source: "none"},
-		"openrouter":     {Source: "none"},
-	}
-	for name, w := range want {
-		// Подсказку в сообщение не кладём: при утечке там оказался бы ключ.
-		if got[name].Source != w.Source {
-			t.Errorf("профиль %s: источник ключа %q, ожидался %q", name, got[name].Source, w.Source)
+		if strings.Contains(body, "секрет") {
+			t.Errorf("%s: в ответе есть слово из ключа", path)
 		}
-		if got[name].Hint != w.Hint {
-			t.Errorf("профиль %s: подсказка ключа не совпала с ожидаемой", name)
+
+		var doc struct {
+			Key keyView `json:"key"`
+		}
+		if err := json.Unmarshal([]byte(body), &doc); err != nil {
+			t.Fatalf("%s: ответ не разобрать: %v", path, err)
+		}
+		// Подсказку в сообщение не кладём: при утечке там оказался бы ключ.
+		if !doc.Key.Set || doc.Key.Hint != "…4096" || doc.Key.Warning != "" {
+			t.Errorf("%s: ключ в ответе не совпал с ожидаемым (set, подсказка из файла)", path)
 		}
 	}
 }

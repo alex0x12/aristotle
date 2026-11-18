@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
@@ -25,7 +26,7 @@ type Session struct {
 	Messages []provider.Message
 
 	// DefaultK — сколько глав просить у поиска, если модель не указала k;
-	// 0 — шесть, как было всегда.
+	// 0 — config.DefaultCorpusK (шесть). Настройкой это не является.
 	DefaultK int
 	// Budget — потолок входа запроса в токенах; 0 — без урезания.
 	Budget int
@@ -55,7 +56,7 @@ func (s *Session) defaultK() int {
 	if s.DefaultK > 0 {
 		return s.DefaultK
 	}
-	return 6
+	return config.DefaultCorpusK
 }
 
 type TurnResult struct {

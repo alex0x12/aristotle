@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alex0x12/aristotle/internal/app"
 	"github.com/alex0x12/aristotle/internal/chat"
-	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
@@ -211,7 +211,7 @@ func TestAgainRetractsAndAsksAgain(t *testing.T) {
 	}
 }
 
-// writeConfig кладёт в конфиг сервера переопределения профиля по умолчанию.
+// writeConfig кладёт в config.json сервера присланный текст как есть.
 func writeConfig(t *testing.T, s *Server, body string) {
 	t.Helper()
 	if err := os.WriteFile(s.Paths.Config, []byte(body), 0o600); err != nil {
@@ -230,7 +230,7 @@ func okTurn(text string) []provider.Event {
 
 func TestOverBudgetWarnsButStillAnswers(t *testing.T) {
 	s := newTestServer(t, &scriptedProvider{turns: [][]provider.Event{okTurn("ответ\n")}}, fakeFinder{})
-	writeConfig(t, s, `{"profiles":{"deepseek":{"context_budget":1}}}`)
+	writeConfig(t, s, `{"context_budget":1}`)
 	rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос"}`)
 	var warnings, names []string
 	for _, ev := range parseSSE(t, rec.Body.String()) {
@@ -252,9 +252,8 @@ func TestOverBudgetWarnsButStillAnswers(t *testing.T) {
 func TestFailedTurnJournalsAndStreamsUsageAsUnknown(t *testing.T) {
 	// Первый запрос хода прошёл и сообщил расход, второй (после поиска)
 	// падает: сценарий кончился. Набранная сумма остаётся, но точной не
-	// выдаётся — ни в журнале, ни в потоке, ни в цене.
+	// выдаётся — ни в журнале, ни в потоке.
 	s := newTestServer(t, &scriptedProvider{turns: script()[:1]}, fakeFinder{hits: []corpus.Hit{{Chapter: ethics}}})
-	writeConfig(t, s, `{"profiles":{"deepseek":{"prices":{"input":1,"output":2,"cache_read":0.5,"cache_write":0}}}}`)
 	rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос"}`)
 
 	var names []string
@@ -275,13 +274,13 @@ func TestFailedTurnJournalsAndStreamsUsageAsUnknown(t *testing.T) {
 	if u["known"] != false || u["input"] != 900.0 || u["output"] != 20.0 || u["cache_read"] != 8000.0 {
 		t.Fatalf("расход в потоке %v: числа завершённых запросов остаются, known — false", u)
 	}
-	if usageEv["cost_usd"] != nil || usageEv["conversation_tokens"] != 0.0 {
-		t.Fatalf("неточный расход попал в цену или сумму беседы: %v", usageEv)
+	if usageEv["conversation_tokens"] != 0.0 {
+		t.Fatalf("неточный расход попал в сумму беседы: %v", usageEv)
 	}
 
 	recs, _ := chat.History{Path: s.conv(convID).history.Path}.Load()
 	a := recs[len(recs)-1]
-	if a.StopReason != "error" || a.Usage == nil || a.Usage.Known || a.Usage.Input != 900 || a.CostUSD != nil {
+	if a.StopReason != "error" || a.Usage == nil || a.Usage.Known || a.Usage.Input != 900 {
 		t.Fatalf("запись ответа %+v, usage %+v", a, a.Usage)
 	}
 }
@@ -298,7 +297,7 @@ func TestCancelledTurnJournalsUsageAsUnknown(t *testing.T) {
 
 	recs, _ := chat.History{Path: s.conv(convID).history.Path}.Load()
 	a := recs[len(recs)-1]
-	if a.StopReason != "cancelled" || a.Usage == nil || a.Usage.Known || a.CostUSD != nil {
+	if a.StopReason != "cancelled" || a.Usage == nil || a.Usage.Known {
 		t.Fatalf("запись ответа %+v, usage %+v: расход остановленного хода неизвестен", a, a.Usage)
 	}
 }
@@ -328,13 +327,15 @@ func TestAgainAfterFailedTurnKeepsEarlierTurn(t *testing.T) {
 }
 
 func TestAgainRefusedBeforeRetractKeepsQuestion(t *testing.T) {
-	// Отказ до начала хода (нет такого профиля) не должен прятать вопрос:
-	// отзыв записывается, только когда ход действительно начнётся.
+	// Отказ до начала хода (ключ пропал) не должен прятать вопрос: отзыв
+	// записывается, только когда ход действительно начнётся.
 	s := newTestServer(t, &scriptedProvider{turns: [][]provider.Event{okTurn("ответ\n")}}, fakeFinder{})
 	h := s.Handler()
 	do(t, h, http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос"}`)
-	if rec := do(t, h, http.MethodPost, "/api/conversations/"+convID+"/again", `{"profile":"нет-такого"}`); rec.Code != http.StatusBadRequest {
-		t.Fatalf("код %d, ожидался 400", rec.Code)
+	noKey(t, s)
+	if rec := do(t, h, http.MethodPost, "/api/conversations/"+convID+"/again", `{}`); rec.Code != http.StatusBadRequest ||
+		!strings.Contains(rec.Body.String(), app.ErrNoKey.Error()) {
+		t.Fatalf("код %d, ожидался 400 с текстом об отсутствии ключа: %s", rec.Code, rec.Body.String())
 	}
 	recs, _ := chat.History{Path: s.conv(convID).history.Path}.Load()
 	for _, r := range recs {
@@ -623,7 +624,7 @@ func TestRestartRestoresTheLiveSession(t *testing.T) {
 			// Перезапуск: новый сервер на тех же каталогах, сессия — из журнала.
 			s2 := New(s.Root, s.Paths, 8337)
 			s2.System, s2.NewProvider, s2.Finder = s.System, s.NewProvider, s.Finder
-			sess, err := s2.session(s2.conv(convID), config.Profile{}, nil, 0)
+			sess, err := s2.session(s2.conv(convID), app.Connection{}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -671,7 +672,7 @@ func TestFollowUpAfterStopSeesStoppedAnswer(t *testing.T) {
 	p2 := &planProvider{plan: []string{"ok"}}
 	s2 := New(s.Root, s.Paths, 8337)
 	s2.System, s2.Finder = s.System, s.Finder
-	s2.NewProvider = func(config.Profile) (provider.Provider, error) { return p2, nil }
+	s2.NewProvider = func(app.Connection) (provider.Provider, error) { return p2, nil }
 	if rec := do(t, s2.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос 4"}`); rec.Code != 200 {
 		t.Fatalf("после перезапуска: код %d", rec.Code)
 	}
@@ -738,7 +739,7 @@ func TestWhitespaceOnlyAnswerIsNotInHistory(t *testing.T) {
 			p2 := &planProvider{plan: []string{"ok"}}
 			s2 := New(s.Root, s.Paths, 8337)
 			s2.System, s2.Finder = s.System, s.Finder
-			s2.NewProvider = func(config.Profile) (provider.Provider, error) { return p2, nil }
+			s2.NewProvider = func(app.Connection) (provider.Provider, error) { return p2, nil }
 			if rec := do(t, s2.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос 4"}`); rec.Code != 200 {
 				t.Fatalf("после перезапуска: код %d", rec.Code)
 			}
@@ -753,13 +754,13 @@ func TestWhitespaceOnlyAnswerIsNotInHistory(t *testing.T) {
 	}
 }
 
-// Испорченный keys.json: ход с профилем, которому нужен файл, отказывает
+// Испорченный keys.json: ход отказывает
 // фиксированным текстом — без пути к файлу и без кусков разбора (там есть знак
 // из самого файла). Ход не начинается: журнал остаётся как был, а «ещё раз» не
 // отзывает прежний ответ.
 func TestTurnWithCorruptKeysFileShowsNoPathOrParserText(t *testing.T) {
 	s := corruptKeysServer(t)
-	s.NewProvider = func(config.Profile) (provider.Provider, error) {
+	s.NewProvider = func(app.Connection) (provider.Provider, error) {
 		t.Fatal("провайдер создан при испорченном keys.json")
 		return nil, nil
 	}
@@ -769,7 +770,7 @@ func TestTurnWithCorruptKeysFileShowsNoPathOrParserText(t *testing.T) {
 	before, _ := os.ReadFile(journal)
 	h := s.Handler()
 	for _, path := range []string{"/turns", "/again"} {
-		rec := do(t, h, http.MethodPost, "/api/conversations/"+convID+path, `{"text":"вопрос","profile":"claude"}`)
+		rec := do(t, h, http.MethodPost, "/api/conversations/"+convID+path, `{"text":"вопрос"}`)
 		msg := rec.Body.String()
 		if rec.Code != http.StatusBadRequest || !strings.Contains(msg, "keys.json не читается") || !cyrillicRe.MatchString(msg) {
 			t.Errorf("%s: код %d: %s", path, rec.Code, msg)
@@ -782,19 +783,5 @@ func TestTurnWithCorruptKeysFileShowsNoPathOrParserText(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(journal); !bytes.Equal(before, after) {
 		t.Errorf("отказ изменил журнал беседы: %q", after)
-	}
-}
-
-// Профиль с ключом в окружении испорченный keys.json не касается: файл не читается.
-func TestTurnWithCorruptKeysFileStillWorksForEnvProfile(t *testing.T) {
-	s := corruptKeysServer(t)
-	t.Setenv("DEEPSEEK_API_KEY", "zq-из-окружения")
-	s.NewProvider = func(config.Profile) (provider.Provider, error) {
-		return &scriptedProvider{turns: [][]provider.Event{okTurn("ответ\n")}}, nil
-	}
-	s.Finder = fakeFinder{}
-	rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос","profile":"deepseek"}`)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "event: done") {
-		t.Fatalf("код %d: %.300s", rec.Code, rec.Body.String())
 	}
 }

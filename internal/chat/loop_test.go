@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/provider"
 )
@@ -666,5 +667,34 @@ func TestDefaultKUsedWhenModelGivesNone(t *testing.T) {
 	}
 	if f.gotK != 3 {
 		t.Fatalf("k = %d, ожидалось 3", f.gotK)
+	}
+}
+
+// Без явного DefaultK поиск просит config.DefaultCorpusK глав; своё k модели
+// по-прежнему главнее.
+func TestDefaultKIsCorpusKWhenUnset(t *testing.T) {
+	call := func(input map[string]any) int {
+		p := &scriptedProvider{turns: [][]provider.Event{
+			{
+				{Kind: provider.EventToolCall, Call: provider.ToolCall{ID: "t", Name: "search_corpus", Input: input}},
+				{Kind: provider.EventDone, StopReason: "tool_use"},
+			},
+			{{Kind: provider.EventText, Text: "ответ"}, {Kind: provider.EventDone, StopReason: "end_turn"}},
+		}}
+		f := &capturingFinder{}
+		s := &Session{Provider: p, Corpus: f}
+		if _, err := s.Turn(context.Background(), "вопрос", nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		return f.gotK
+	}
+	if config.DefaultCorpusK != 6 {
+		t.Fatalf("DefaultCorpusK = %d, ожидалось 6", config.DefaultCorpusK)
+	}
+	if got := call(map[string]any{"query": "x"}); got != config.DefaultCorpusK {
+		t.Fatalf("k = %d, ожидалось %d", got, config.DefaultCorpusK)
+	}
+	if got := call(map[string]any{"query": "x", "k": float64(2)}); got != 2 {
+		t.Fatalf("своё k модели потеряно: %d", got)
 	}
 }

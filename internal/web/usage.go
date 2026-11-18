@@ -13,49 +13,42 @@ import (
 	"github.com/alex0x12/aristotle/internal/chat"
 )
 
-type usageRow struct {
-	Day        string `json:"day,omitempty"`
-	Profile    string `json:"profile,omitempty"`
-	Input      int    `json:"input"`
-	Output     int    `json:"output"`
-	CacheRead  int    `json:"cache_read"`
-	CacheWrite int    `json:"cache_write"`
-	// CostUSD — сумма цен ответов; нет ни одной цены — поля нет вовсе, и
-	// «$» не показывается. Ноль долларов и «цены неизвестны» — разные вещи.
-	CostUSD *float64 `json:"cost_usd,omitempty"`
-	// CostPartial — у части ответов цены нет: сумма занижена.
-	CostPartial bool `json:"cost_partial"`
-	// Partial — в строке есть ответы с known:false (оборванный ход, провайдер
-	// не назвал токенов): числа в ней — то, что удалось сосчитать, а не итог.
+// usageTotal — сумма расхода: токены трёх видов (вход без кэша, вывод, чтение из
+// кэша). Записи в кэш и цены в таблице нет: старые журналы с cache_write и
+// cost_usd читаются, но для этих колонок ничего не добавляют.
+type usageTotal struct {
+	Input     int `json:"input"`
+	Output    int `json:"output"`
+	CacheRead int `json:"cache_read"`
+	// Partial — в сумме есть ответы с known:false (оборванный ход, провайдер не
+	// назвал токенов): числа в ней — то, что удалось сосчитать, а не итог.
 	Partial bool `json:"partial"`
 	Answers int  `json:"answers"`
 }
 
+// usageRow — строка таблицы: день и модель. Model пуст у журналов без модели
+// (до появления поля): интерфейс показывает «—». Поле есть в ответе всегда.
+type usageRow struct {
+	Day   string `json:"day"`
+	Model string `json:"model"`
+	usageTotal
+}
+
 // add прибавляет запись журнала; usage у неё уже проверен на nil.
-func (r *usageRow) add(rec chat.Record) {
+func (r *usageTotal) add(rec chat.Record) {
 	u := rec.Usage
 	r.Input += u.Input
 	r.Output += u.Output
 	r.CacheRead += u.CacheRead
-	r.CacheWrite += u.CacheWrite
 	r.Answers++
 	if !u.Known {
 		r.Partial = true
 	}
-	if rec.CostUSD != nil {
-		sum := *rec.CostUSD
-		if r.CostUSD != nil {
-			sum += *r.CostUSD
-		}
-		r.CostUSD = &sum
-	} else {
-		r.CostPartial = true
-	}
 }
 
-// aggregate — расход по дням и профилям из журналов каталога dir и его
+// aggregate — расход по дням и моделям из журналов каталога dir и его
 // подкаталога trash/ за [from, to] включительно, по местным датам. Отозванные
-// «ещё раз» ответы тоже считаются: деньги за них потрачены. Ответы с known:false
+// «ещё раз» ответы тоже считаются: токены за них потрачены. Ответы с known:false
 // (оборванные, неудавшиеся) тоже входят — своими частичными числами, но строка
 // с ними помечена Partial. Записи без usage (журналы до появления учёта) не
 // считаются. Корзина считается наравне с остальным: удаление беседы не должно
@@ -64,9 +57,9 @@ func (r *usageRow) add(rec chat.Record) {
 // Журнал, который не прочитался (строка длиннее предела History.Load, ошибка
 // чтения), не исчезает молча: строка о нём — в журнал сервера (без содержимого),
 // а итог помечается Partial, если журнал мог иметь ответы в периоде. К какому
-// дню и профилю относится непрочитанное, неизвестно, поэтому строки не метятся.
-func aggregate(dir string, from, to time.Time) ([]usageRow, usageRow, error) {
-	var total usageRow
+// дню и модели относится непрочитанное, неизвестно, поэтому строки не метятся.
+func aggregate(dir string, from, to time.Time) ([]usageRow, usageTotal, error) {
+	var total usageTotal
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return []usageRow{}, total, nil
@@ -97,9 +90,9 @@ func aggregate(dir string, from, to time.Time) ([]usageRow, usageRow, error) {
 				if day < lo || day > hi {
 					continue
 				}
-				key := [2]string{day, rec.Profile}
+				key := [2]string{day, rec.Model}
 				if rows[key] == nil {
-					rows[key] = &usageRow{Day: day, Profile: rec.Profile}
+					rows[key] = &usageRow{Day: day, Model: rec.Model}
 				}
 				rows[key].add(rec)
 				total.add(rec)
@@ -121,7 +114,7 @@ func aggregate(dir string, from, to time.Time) ([]usageRow, usageRow, error) {
 		if out[i].Day != out[j].Day {
 			return out[i].Day > out[j].Day
 		}
-		return out[i].Profile < out[j].Profile
+		return out[i].Model < out[j].Model
 	})
 	return out, total, nil
 }
