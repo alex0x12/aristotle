@@ -191,7 +191,7 @@ func main() {
 				res.Trim.Excerpts, res.Trim.Turns)
 		}
 		if res.OverBudget {
-			fmt.Fprintln(os.Stderr, "[контекст: текущий ход сам больше бюджета — отправлен целиком]")
+			fmt.Fprintln(os.Stderr, "[контекст: бюджет превышен и после урезания — запрос отправлен в урезанном виде]")
 		}
 	}
 }

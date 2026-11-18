@@ -63,7 +63,9 @@ type TurnResult struct {
 	// Trim — что не вошло в последний запрос хода. Сообщения хода только
 	// прибавляются, поэтому урезание последнего запроса — самое сильное.
 	Trim Trim
-	// OverBudget — текущий ход сам не влез в бюджет и ушёл как есть.
+	// OverBudget — запрос не уложился в бюджет и после всех урезаний
+	// (системный промпт, инструменты, первый и текущий ход): он ушёл в
+	// урезанном виде, а не заблокирован.
 	OverBudget bool
 }
 
@@ -163,6 +165,9 @@ func (s *Session) Turn(ctx context.Context, userText string,
 		stream, err := s.Provider.Stream(ctx, req)
 		if err != nil {
 			s.Messages = s.Messages[:baseLen]
+			// Расход упавшего запроса неизвестен: уже набранная сумма
+			// остаётся в res, но помечается неполной, а не выдаётся за итог.
+			res.Usage.Known = false
 			return res, err
 		}
 
@@ -187,6 +192,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 		if err := stream.Err(); err != nil {
 			stream.Close()
 			s.Messages = s.Messages[:baseLen]
+			res.Usage.Known = false // см. выше: расход оборванного запроса неизвестен
 			return res, err
 		}
 		stream.Close()

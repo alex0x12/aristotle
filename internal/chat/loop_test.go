@@ -592,3 +592,61 @@ func TestTurnUsageUnknownWhenARequestIsSilent(t *testing.T) {
 		t.Fatalf("один запрос без расхода делает сумму неизвестной: %+v", res.Usage)
 	}
 }
+
+// failingSecondProvider проводит первый запрос по сценарию, а второй роняет:
+// либо сразу на Stream, либо через Err() потока. Нужен, чтобы проверить итог
+// хода, оборвавшегося после того, как расход первого запроса уже учтён.
+type failingSecondProvider struct {
+	first    []provider.Event
+	err      error
+	viaErr   bool // false — падает Stream, true — падает Err() потока
+	requests int
+}
+
+func (p *failingSecondProvider) Stream(context.Context, provider.Request) (provider.Stream, error) {
+	p.requests++
+	if p.requests == 1 {
+		return &scriptedStream{events: p.first}, nil
+	}
+	if p.viaErr {
+		return &erroringStream{err: p.err}, nil
+	}
+	return nil, p.err
+}
+
+// TestFailedTurnMarksUsageUnknown: когда второй запрос хода падает, сумма
+// первого остаётся в Usage, но расход оборванного запроса неизвестен — сумма
+// занижена, и без Known = false цифра на экране выглядела бы полной.
+func TestFailedTurnMarksUsageUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		viaErr bool
+	}{
+		{"Stream падает сразу", false},
+		{"Err() потока после чтения", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cause := errors.New("поток оборвался")
+			p := &failingSecondProvider{err: cause, viaErr: tc.viaErr, first: []provider.Event{
+				{Kind: provider.EventToolCall, Call: provider.ToolCall{
+					ID: "c1", Name: "search_corpus",
+					Input: map[string]any{"query": "happiness"}}},
+				{Kind: provider.EventUsage, Usage: provider.Usage{
+					Input: 100, Output: 10, CacheRead: 1000, Known: true}},
+				{Kind: provider.EventDone, StopReason: "tool_use"},
+			}}
+			s := &Session{Provider: p, Corpus: &fakeFinder{}}
+
+			res, err := s.Turn(context.Background(), "х", func(string) {}, nil)
+			if !errors.Is(err, cause) {
+				t.Fatalf("ожидалась ошибка провайдера, получено %v", err)
+			}
+			if res.Usage.Input != 100 || res.Usage.Output != 10 || res.Usage.CacheRead != 1000 {
+				t.Errorf("сумма первого запроса потеряна: %+v", res.Usage)
+			}
+			if res.Usage.Known {
+				t.Error("Known должен быть false: расход упавшего запроса неизвестен")
+			}
+		})
+	}
+}
