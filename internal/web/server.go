@@ -9,7 +9,9 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
+	"path"
 	"sync"
 
 	"github.com/alex0x12/aristotle/internal/app"
@@ -21,6 +23,14 @@ import (
 
 //go:embed static
 var embedded embed.FS
+
+func init() {
+	// Таблица типов Go не знает woff2, а системный mime.types есть не везде;
+	// без явного типа шрифт зависел бы от сниффинга сигнатуры файла.
+	if err := mime.AddExtensionType(".woff2", "font/woff2"); err != nil {
+		panic(err) // тип записан литералом; ошибка — дефект кода
+	}
+}
 
 type Server struct {
 	Root  string // корень репозитория: persona/ и corpus/
@@ -55,12 +65,31 @@ func (s *Server) Handler() http.Handler {
 		panic(err) // встроенное дерево есть всегда; ошибка — дефект сборки
 	}
 	mux := http.NewServeMux()
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", noDirListing(static, http.FileServerFS(static))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, static, "index.html")
 	})
 	s.routes(mux)
 	return guard(s.Port, mux)
+}
+
+// noDirListing отвечает 404 на каталог без index.html: файловый сервер Go
+// показал бы список файлов, а страницей такой каталог не является. Путь здесь
+// уже без префикса /static/.
+func noDirListing(fsys fs.FS, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := path.Clean("/" + r.URL.Path)[1:]
+		if name == "" {
+			name = "."
+		}
+		if fi, err := fs.Stat(fsys, name); err == nil && fi.IsDir() {
+			if _, err := fs.Stat(fsys, path.Join(name, "index.html")); err != nil {
+				http.NotFound(w, r)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // routes — маршруты API. Каждая задача плана добавляет сюда свои.

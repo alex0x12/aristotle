@@ -14,7 +14,7 @@ MODEL_FLAG := $(if $(MODEL),-model $(MODEL),)
 
 .DEFAULT_GOAL := help
 .PHONY: help build run web test test-go test-py check fmt vet eval eval-recall \
-        corpus corpus-force index clean
+        corpus corpus-force index assets clean
 
 help: ## Показать эту справку
 	@printf 'Цели:\n'
@@ -79,6 +79,13 @@ index: ## Завести коллекцию qmd и построить эмбед
 	qmd collection add $(CURDIR)/corpus --name aristotle --pattern '**/*.md'
 	qmd context add qmd://aristotle/ "Полный корпус Аристотеля по-английски, один файл на главу, с полями authenticity и group во frontmatter"
 	qmd embed -c aristotle
+
+# --- веб-интерфейс -----------------------------------------------------------
+# Изображения и шрифты уже лежат в git (internal/web/static); качать заново
+# нужно, только если меняется их набор.
+
+assets: ## Скачать изображения и шрифты веб-интерфейса (результат уже в git)
+	bash build/web-assets.sh
 
 # --- прочее ------------------------------------------------------------------
 

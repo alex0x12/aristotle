@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -56,6 +57,41 @@ func TestIndexIsServed(t *testing.T) {
 	}
 	if rec.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("нет Content-Security-Policy")
+	}
+}
+
+func TestFontsAreServedAsWoff2(t *testing.T) {
+	h := newTestServer(t, nil, nil).Handler()
+	for _, name := range []string{"forum", "eb-garamond", "eb-garamond-italic"} {
+		rec := do(t, h, http.MethodGet, "/static/fonts/"+name+".woff2", "")
+		if rec.Code != 200 {
+			t.Fatalf("%s: код %d, ожидался 200", name, rec.Code)
+		}
+		if got := rec.Header().Get("Content-Type"); got != "font/woff2" {
+			t.Errorf("%s: Content-Type %q, ожидался font/woff2", name, got)
+		}
+	}
+	// В таблице типов Go woff2 нет, а системный mime.types есть не везде.
+	// Файловый сервер выручил бы и сниффинг сигнатуры wOF2, но полагаться
+	// на него не стоит: тип задан явно, и тест его проверяет напрямую.
+	if got := mime.TypeByExtension(".woff2"); got != "font/woff2" {
+		t.Errorf("тип расширения .woff2 — %q, ожидался font/woff2", got)
+	}
+}
+
+func TestStaticDirectoriesAreNotListed(t *testing.T) {
+	h := newTestServer(t, nil, nil).Handler()
+	// Без index.html каталог — не страница: список файлов наружу не отдаём,
+	// ни со слешем, ни без него (без слеша FileServer сначала редиректит).
+	for _, path := range []string{"/static/js/", "/static/fonts/", "/static/img/", "/static/js", "/static/fonts"} {
+		rec := do(t, h, http.MethodGet, path, "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: код %d, ожидался 404; тело %.120s", path, rec.Code, rec.Body.String())
+		}
+	}
+	// Сами файлы по-прежнему отдаются.
+	if rec := do(t, h, http.MethodGet, "/static/fonts/OFL-Forum.txt", ""); rec.Code != 200 {
+		t.Errorf("файл внутри каталога: код %d, ожидался 200", rec.Code)
 	}
 }
 
