@@ -8,9 +8,24 @@ CMD     := ./cmd/aristotle
 PY      := build/venv/bin/python
 QUESTIONS := eval/questions.yaml
 
+# PHILOSOPHER=<slug> — пакет philosophers/<slug> вместо Аристотеля в корне
+# (цели corpus, corpus-force, index, recall).
+PHILOSOPHER ?=
+ifeq ($(PHILOSOPHER),)
+  COLLECTION  := aristotle
+  CORPUS_DIR  := $(CURDIR)/corpus
+  QMD_CONTEXT := Полный корпус Аристотеля по-английски, один файл на главу, с полями authenticity и group во frontmatter
+  PHIL_FLAG   :=
+else
+  COLLECTION  := $(PHILOSOPHER)
+  CORPUS_DIR  := $(CURDIR)/philosophers/$(PHILOSOPHER)/corpus
+  QMD_CONTEXT := Корпус $(PHILOSOPHER) по-английски, один файл на главу, с полями authenticity и group во frontmatter
+  PHIL_FLAG   := --philosopher $(PHILOSOPHER)
+endif
+
 .DEFAULT_GOAL := help
 .PHONY: help build run web test test-go test-py check fmt vet eval eval-recall \
-        corpus corpus-force index assets clean
+        corpus corpus-force index recall assets clean
 
 help: ## Показать эту справку
 	@printf 'Цели:\n'
@@ -62,16 +77,19 @@ eval: build ## Полный прогон: recall плюс верность от�
 # Корпус уже собран и лежит в git. Пересобирать нужно, только если
 # менялся build/works.yaml или парсеры. Подробности — в SOURCES.md.
 
-corpus: ## Дособрать корпус, не трогая уже скачанное
-	cd build && venv/bin/python build.py
+corpus: ## Дособрать корпус (PHILOSOPHER=<slug> — пакет), не трогая уже скачанное
+	cd build && venv/bin/python build.py $(PHIL_FLAG)
 
-corpus-force: ## Пересобрать корпус с нуля
-	cd build && venv/bin/python build.py --force
+corpus-force: ## Пересобрать корпус с нуля (PHILOSOPHER=<slug> — пакет)
+	cd build && venv/bin/python build.py --force $(PHIL_FLAG)
 
-index: ## Завести коллекцию qmd и построить эмбеддинги (разово, минуты)
-	qmd collection add $(CURDIR)/corpus --name aristotle --pattern '**/*.md'
-	qmd context add qmd://aristotle/ "Полный корпус Аристотеля по-английски, один файл на главу, с полями authenticity и group во frontmatter"
-	qmd embed -c aristotle
+index: ## Завести коллекцию qmd и построить эмбеддинги (PHILOSOPHER=<slug> — пакет; минуты)
+	qmd collection add $(CORPUS_DIR) --name $(COLLECTION) --pattern '**/*.md'
+	qmd context add qmd://$(COLLECTION)/ "$(QMD_CONTEXT)"
+	qmd embed -c $(COLLECTION)
+
+recall: ## Recall поиска по вопросам, без модели (PHILOSOPHER=<slug> — пакет)
+	cd build && venv/bin/python recall.py $(PHIL_FLAG)
 
 # --- веб-интерфейс -----------------------------------------------------------
 # Изображения и шрифты уже лежат в git (internal/web/static); качать заново
