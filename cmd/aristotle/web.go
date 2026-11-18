@@ -21,8 +21,11 @@ import (
 	"github.com/alex0x12/aristotle/internal/web"
 )
 
-// checkAddr принимает только адрес на петле: ключи управляются из
-// интерфейса, и наружу его выставлять нельзя.
+// checkAddr принимает только localhost, 127.0.0.1 и ::1: ключи управляются из
+// интерфейса, и наружу его выставлять нельзя. Круг уже, чем «любой адрес
+// петли» (127.0.0.2, ::ffff:127.0.0.1): охранник сервера (web.guard) пускает
+// только Host с этими тремя именами, и на любой другой адрес сервер слушал бы,
+// но отвечал на каждый запрос 421.
 func checkAddr(addr string) (int, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -32,11 +35,10 @@ func checkAddr(addr string) (int, error) {
 	if err != nil || port <= 0 || port > 65535 {
 		return 0, fmt.Errorf("адрес %q: порт должен быть числом от 1 до 65535", addr)
 	}
-	if host != "localhost" {
-		ip := net.ParseIP(host)
-		if ip == nil || !ip.IsLoopback() {
-			return 0, fmt.Errorf("адрес %q: слушать можно только 127.0.0.1, ::1 или localhost", addr)
-		}
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+	default:
+		return 0, fmt.Errorf("адрес %q: разрешены только петлевые имена localhost, 127.0.0.1 и ::1", addr)
 	}
 	return port, nil
 }

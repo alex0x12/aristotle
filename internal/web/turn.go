@@ -232,7 +232,8 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, 
 			// его помнит — возвращаем в сессию вопрос и начало ответа, чтобы
 			// следующий ход видел то же, что видит человек (и «продолжай»
 			// имело смысл). После перезапуска сессия соберётся из журнала так
-			// же (app.AnswerKept); остановка до первого слова хода не оставляет.
+			// же (app.AnswerKept); остановка до первого слова или после одних пробелов
+			// хода не оставляет.
 			rec.StopReason = "cancelled"
 			if app.AnswerKept(rec) {
 				sess.Messages = append(sess.Messages,

@@ -428,9 +428,10 @@ func TestRequestsDuringRunningTurn(t *testing.T) {
 }
 
 // planProvider отвечает на запросы по заранее заданному плану исходов: ok,
-// empty (ответ без текста), fail (отказ провайдера), fail-partial (обрыв
-// потока после начала ответа), cancel-empty и cancel-partial (клиент уходит
-// до первого слова и после начала ответа). Остановку делает сам провайдер,
+// empty (ответ без текста), blank (ответ из одного перевода строки), fail
+// (отказ провайдера), fail-partial (обрыв потока после начала ответа),
+// cancel-empty, cancel-blank и cancel-partial (клиент уходит до первого слова,
+// после одной дельты «\n» и после начала ответа). Остановку делает сам провайдер,
 // вызывая cancel, — без пауз и гонок. Сообщения каждого запроса копируются:
 // сессия потом перезаписывает свой срез.
 type planProvider struct {
@@ -449,6 +450,10 @@ func (p *planProvider) Stream(ctx context.Context, req provider.Request) (provid
 		return &scriptedStream{events: okTurn(fmt.Sprintf("ответ %d\n", p.n))}, nil
 	case "empty":
 		return &scriptedStream{events: []provider.Event{{Kind: provider.EventDone, StopReason: "end_turn"}}}, nil
+	case "blank":
+		return &scriptedStream{events: []provider.Event{
+			{Kind: provider.EventText, Text: "\n"},
+			{Kind: provider.EventDone, StopReason: "end_turn"}}}, nil
 	case "fail":
 		return nil, errors.New("сбой провайдера")
 	case "fail-partial":
@@ -457,6 +462,8 @@ func (p *planProvider) Stream(ctx context.Context, req provider.Request) (provid
 		return &cancelStream{ctx: ctx, cancel: p.cancel}, nil
 	case "cancel-partial":
 		return &cancelStream{ctx: ctx, cancel: p.cancel, partial: "начало ответа"}, nil
+	case "cancel-blank":
+		return &cancelStream{ctx: ctx, cancel: p.cancel, partial: "\n"}, nil
 	}
 	return nil, fmt.Errorf("неизвестный исход %q", outcome)
 }
@@ -505,6 +512,17 @@ func flatMessages(msgs []provider.Message) string {
 	return strings.Join(parts, " | ")
 }
 
+// noBlank — в истории нет сообщения из одних пробельных символов (без вызовов
+// инструмента и их результатов): Anthropic отвергает такой текстовый блок.
+func noBlank(msgs []provider.Message) bool {
+	for _, m := range msgs {
+		if strings.TrimSpace(m.Text) == "" && len(m.ToolCalls) == 0 && len(m.ToolResults) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // alternates — сообщения чередуются user, assistant и начинаются с user.
 func alternates(msgs []provider.Message) bool {
 	for i, m := range msgs {
@@ -548,6 +566,11 @@ func TestRestartRestoresTheLiveSession(t *testing.T) {
 		"ok, ошибка с началом ответа, ещё раз":       {{false, ok}, {false, "fail-partial"}, {again, ok}},
 		"ok, остановка до слова, ещё раз":            {{false, ok}, {false, "cancel-empty"}, {again, ok}},
 		"две остановки с текстом подряд, ok":         {{false, "cancel-partial"}, {false, "cancel-partial"}, {false, ok}},
+		"ok, остановка после пробела, ok":            {{false, ok}, {false, "cancel-blank"}, {false, ok}},
+		"остановка после пробела, ещё раз":           {{false, "cancel-blank"}, {again, ok}},
+		"ok, пробельный ответ, ok":                   {{false, ok}, {false, "blank"}, {false, ok}},
+		"ok, пробельный ответ, ещё раз":              {{false, ok}, {false, "blank"}, {again, ok}},
+		"пробел при остановке, потом текст":          {{false, "cancel-blank"}, {false, "cancel-partial"}, {false, ok}},
 	}
 	for name, steps := range sequences {
 		t.Run(name, func(t *testing.T) {
@@ -579,8 +602,8 @@ func TestRestartRestoresTheLiveSession(t *testing.T) {
 			live := s.conv(convID).session.Messages
 
 			// Каждый шаг дошёл до своего исхода, а не до какого-то соседнего.
-			reasons := map[string]string{"ok": "end", "empty": "end", "fail": "error",
-				"fail-partial": "error", "cancel-empty": "cancelled", "cancel-partial": "cancelled"}
+			reasons := map[string]string{"ok": "end", "empty": "end", "blank": "end", "fail": "error",
+				"fail-partial": "error", "cancel-empty": "cancelled", "cancel-blank": "cancelled", "cancel-partial": "cancelled"}
 			var wantReasons, gotReasons []string
 			for _, st := range steps {
 				wantReasons = append(wantReasons, reasons[st.outcome])
@@ -607,6 +630,10 @@ func TestRestartRestoresTheLiveSession(t *testing.T) {
 			}
 			if !alternates(live) || !alternates(sess.Messages) {
 				t.Fatalf("роли не чередуются: живая %s, восстановленная %s", flatMessages(live), flatMessages(sess.Messages))
+			}
+			// Совпадения мало: обе стороны могли бы одинаково оставить пробельный ответ.
+			if !noBlank(live) || !noBlank(sess.Messages) {
+				t.Fatalf("в истории есть сообщение из одних пробелов: живая %q, восстановленная %q", flatMessages(live), flatMessages(sess.Messages))
 			}
 		})
 	}
@@ -649,5 +676,77 @@ func TestFollowUpAfterStopSeesStoppedAnswer(t *testing.T) {
 	want = "user:вопрос 1 | assistant:ответ 1 | user:вопрос 2 | assistant:начало ответа | user:вопрос 3 | assistant:ответ 3 | user:вопрос 4"
 	if got := flatMessages(p2.requests[0]); got != want {
 		t.Fatalf("запрос после перезапуска:\n  %s\nожидалось:\n  %s", got, want)
+	}
+}
+
+// Ответ из одних пробельных символов — пустой: и после Stop сразу за дельтой
+// «\n», и когда провайдер сам закончил таким ответом. Anthropic отвергает
+// текстовый блок без видимого текста, поэтому ход остаётся в журнале и на
+// экране, но не в истории для модели — ни в живой сессии, ни после перезапуска.
+// Следующий запрос провайдеру не содержит ни вопроса, ни пробельного ответа.
+func TestWhitespaceOnlyAnswerIsNotInHistory(t *testing.T) {
+	for _, outcome := range []string{"cancel-blank", "blank"} {
+		t.Run(outcome, func(t *testing.T) {
+			p := &planProvider{plan: []string{"ok", outcome, "ok"}}
+			s := newTestServer(t, p, fakeFinder{})
+			h := s.Handler()
+			for i, o := range p.plan {
+				ctx, cancel := context.WithCancel(context.Background())
+				p.cancel = cancel
+				req := httptest.NewRequest(http.MethodPost, "/api/conversations/"+convID+"/turns",
+					strings.NewReader(fmt.Sprintf(`{"text":"вопрос %d"}`, i+1))).WithContext(ctx)
+				req.Host = "127.0.0.1:8337"
+				req.Header.Set("Origin", "http://127.0.0.1:8337")
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, req)
+				cancel()
+				if rec.Code != 200 {
+					t.Fatalf("шаг %d (%s): код %d", i+1, o, rec.Code)
+				}
+			}
+
+			// Третий запрос ушёл без второго хода.
+			want := "user:вопрос 1 | assistant:ответ 1 | user:вопрос 3"
+			if got := flatMessages(p.requests[2]); got != want {
+				t.Fatalf("запрос после пробельного ответа:\n  %s\nожидалось:\n  %s", got, want)
+			}
+			if !noBlank(p.requests[2]) {
+				t.Fatal("в запросе провайдеру есть сообщение из одних пробелов")
+			}
+			live := s.conv(convID).session.Messages
+			want = "user:вопрос 1 | assistant:ответ 1 | user:вопрос 3 | assistant:ответ 3"
+			if got := flatMessages(live); got != want {
+				t.Fatalf("живая сессия:\n  %s\nожидалось:\n  %s", got, want)
+			}
+
+			// В журнале ход остался: вопрос и пробельный ответ с причиной остановки.
+			recs, _ := s.conv(convID).history.Load()
+			var blank []chat.Record
+			for _, r := range recs {
+				if r.Role == "assistant" && strings.TrimSpace(r.Text) == "" {
+					blank = append(blank, r)
+				}
+			}
+			wantReason := map[string]string{"cancel-blank": "cancelled", "blank": "end"}[outcome]
+			if len(blank) != 1 || blank[0].Text != "\n" || blank[0].StopReason != wantReason {
+				t.Fatalf("в журнале пробельных ответов %+v, ожидался один с текстом \\n и причиной %s", blank, wantReason)
+			}
+
+			// После перезапуска следующий запрос видит ту же историю.
+			p2 := &planProvider{plan: []string{"ok"}}
+			s2 := New(s.Root, s.Paths, 8337)
+			s2.System, s2.Finder = s.System, s.Finder
+			s2.NewProvider = func(config.Profile) (provider.Provider, error) { return p2, nil }
+			if rec := do(t, s2.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос 4"}`); rec.Code != 200 {
+				t.Fatalf("после перезапуска: код %d", rec.Code)
+			}
+			want = "user:вопрос 1 | assistant:ответ 1 | user:вопрос 3 | assistant:ответ 3 | user:вопрос 4"
+			if got := flatMessages(p2.requests[0]); got != want {
+				t.Fatalf("запрос после перезапуска:\n  %s\nожидалось:\n  %s", got, want)
+			}
+			if !noBlank(p2.requests[0]) {
+				t.Fatal("после перезапуска в запросе есть сообщение из одних пробелов")
+			}
+		})
 	}
 }

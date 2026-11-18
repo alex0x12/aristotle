@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -571,6 +572,82 @@ func TestLastTurnKept(t *testing.T) {
 	for _, c := range cases {
 		if got := LastTurnKept(c.recs); got != c.want {
 			t.Errorf("%s: %v, ожидалось %v", c.name, got, c.want)
+		}
+	}
+}
+
+// Ответ из одних пробельных символов — тот же пустой ответ: Anthropic отвергает
+// текстовый блок без видимого текста, а Stop сразу после одной дельты «\n»
+// даёт именно такой. Правило одно на живую сессию и на восстановление.
+func TestAnswerKeptTreatsWhitespaceAsEmpty(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  chat.Record
+		want bool
+	}{
+		{"перевод строки, остановка", chat.Record{Text: "\n", StopReason: "cancelled"}, false},
+		{"перевод строки, конец", chat.Record{Text: "\n", StopReason: "end"}, false},
+		{"пробелы и табуляция, остановка", chat.Record{Text: "  \n\t", StopReason: "cancelled"}, false},
+		{"пробелы и табуляция, конец", chat.Record{Text: "  \n\t", StopReason: "end"}, false},
+		{"пробелы, запись командной строки", chat.Record{Text: " \r\n"}, false},
+		{"пусто, конец", chat.Record{StopReason: "end"}, false},
+		{"текст, остановка", chat.Record{Text: "начало", StopReason: "cancelled"}, true},
+		{"текст, конец", chat.Record{Text: "ответ", StopReason: "end"}, true},
+		{"текст в пробелах", chat.Record{Text: "\n ответ \n", StopReason: "end"}, true},
+		{"текст, запись командной строки", chat.Record{Text: "ответ"}, true},
+		{"текст, ошибка", chat.Record{Text: "начало", StopReason: "error"}, false},
+	}
+	for _, c := range cases {
+		if got := AnswerKept(c.rec); got != c.want {
+			t.Errorf("%s: AnswerKept = %v, ожидалось %v", c.name, got, c.want)
+		}
+	}
+}
+
+// Ход с пробельным ответом выпадает при восстановлении целиком, вместе с
+// вопросом: роли по-прежнему чередуются, а «ещё раз» после него не снимает
+// предыдущий удавшийся ход.
+func TestResumeMessagesRollsBackWhitespaceOnlyAnswer(t *testing.T) {
+	for _, text := range []string{"\n", "  \n\t"} {
+		for _, reason := range []string{"cancelled", "end"} {
+			name := "текст " + strconv.Quote(text) + ", " + reason
+			blank := chat.Record{Role: "assistant", Text: text, StopReason: reason}
+			records := []chat.Record{
+				{Role: "user", Text: "q1"},
+				{Role: "assistant", Text: "a1", StopReason: "end"},
+				{Role: "user", Text: "q2"},
+				blank,
+				{Role: "user", Text: "q3"},
+				{Role: "assistant", Text: "a3", StopReason: "end"},
+			}
+			msgs := ResumeMessages(records)
+			if got, want := flat(msgs), "user:q1 | assistant:a1 | user:q3 | assistant:a3"; got != want {
+				t.Errorf("%s: %s, ожидалось %s", name, got, want)
+			}
+			for i, m := range msgs {
+				if wantRole := []provider.Role{provider.RoleUser, provider.RoleAssistant}[i%2]; m.Role != wantRole {
+					t.Errorf("%s: сообщение %d с ролью %s, роли должны чередоваться", name, i, m.Role)
+				}
+			}
+
+			// Хвост журнала: ход с пробельным ответом последний.
+			tail := records[:4]
+			if got, want := flat(ResumeMessages(tail)), "user:q1 | assistant:a1"; got != want {
+				t.Errorf("%s, ход последний: %s, ожидалось %s", name, got, want)
+			}
+			if LastTurnKept(tail) {
+				t.Errorf("%s: LastTurnKept = true для хода, которого в истории нет", name)
+			}
+
+			// Отзыв после такого хода не должен снять предыдущий, удавшийся ход:
+			// откатанного в истории нет.
+			again := append(append([]chat.Record{}, tail...), chat.Record{Role: chat.RoleRetract})
+			if got, want := flat(ResumeMessages(again)), "user:q1 | assistant:a1"; got != want {
+				t.Errorf("%s, отзыв: %s, ожидалось %s", name, got, want)
+			}
+			if !LastTurnKept(again) {
+				t.Errorf("%s: после отзыва последним стоит удавшийся ход, LastTurnKept = false", name)
+			}
 		}
 	}
 }
