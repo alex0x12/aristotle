@@ -67,6 +67,7 @@ and Shortness of Life, On Youth and Old Age/On Life and Death/On Breathing —
 
 ## Состав
 
+<!-- corpus-table:begin -->
 | Работа | Переводчик | Год | Подлинность | Глав | Источник |
 |---|---|---|---|---|---|
 | [Categories](https://classics.mit.edu/Aristotle/categories.mb.txt) | E. M. Edghill | 1926 | genuine | 15 | mit |
@@ -98,6 +99,7 @@ and Shortness of Life, On Youth and Old Age/On Life and Death/On Breathing —
 | [The Athenian Constitution](https://classics.mit.edu/Aristotle/athenian_const.mb.txt) | Sir Frederic G. Kenyon | 1921 | genuine | 69 | mit |
 | [The History of Animals](https://classics.mit.edu/Aristotle/history_anim.mb.txt) | D'Arcy Wentworth Thompson | 1910 | genuine | 230 | mit |
 | [Topics](https://classics.mit.edu/Aristotle/topics.mb.txt) | W. A. Pickard-Cambridge | 1928 | genuine | 82 | mit |
+<!-- corpus-table:end -->
 
 ## Веб-интерфейс
 

@@ -1,5 +1,10 @@
+from pathlib import Path
+import pytest
 from registry import Work
 import sources
+
+ROOT_SOURCES = Path(__file__).parent.parent.parent / "SOURCES.md"
+TABLE = "| a |\n|---|\n| row |\n"
 
 WORKS = {
     "nicomachean-ethics": Work(
@@ -26,10 +31,10 @@ def test_marks_spurious():
     assert "spurious" in problems_row
 
 
-def test_states_public_domain_reasoning():
-    out = sources.render(WORKS, {})
-    assert "общественном достоянии" in out
-    assert "вёрстк" in out, "должно быть сказано, что вёрстка не воспроизводится"
+def test_render_is_table_only():
+    out = sources.render(WORKS, {"nicomachean-ethics": 10, "problems": 38})
+    assert out.startswith("| Работа |")
+    assert "общественном достоянии" not in out
 
 
 def test_table_has_year_column():
@@ -50,9 +55,41 @@ def test_year_missing_renders_placeholder_not_blank():
     assert "—" in row
 
 
-def test_states_1931_caveat_for_on_the_soul():
-    out = sources.render(WORKS, {})
-    assert "1931" in out
-    assert "On the Soul" in out
-    assert "1 января 2027" in out, \
-        "95 лет с 1931 года истекают в 2026-м, дата перехода в PD — начало следующего года"
+def test_splice_replaces_only_between_markers():
+    before = ("# Заголовок\n\nпроза сверху\n\n"
+              f"{sources.BEGIN}\n| old |\n{sources.END}\n\n## Ниже\nпроза снизу\n")
+    after = sources.splice(before, TABLE, "не нужен")
+    assert after == ("# Заголовок\n\nпроза сверху\n\n"
+                     f"{sources.BEGIN}\n{TABLE}{sources.END}\n\n## Ниже\nпроза снизу\n")
+
+
+def test_splice_refuses_without_markers():
+    with pytest.raises(sources.SourcesError, match="меток"):
+        sources.splice("# руками написанный файл\n", TABLE, "x")
+
+
+@pytest.mark.parametrize("text", [
+    f"{sources.BEGIN}\n",
+    f"{sources.END}\n{sources.BEGIN}\n",
+    f"{sources.BEGIN}\n{sources.END}\n{sources.BEGIN}\n{sources.END}\n",
+])
+def test_splice_refuses_broken_markers(text):
+    with pytest.raises(sources.SourcesError):
+        sources.splice(text, TABLE, "x")
+
+
+def test_splice_creates_new_file():
+    out = sources.splice(None, TABLE, "Источники корпуса: Эпиктет")
+    assert out == (f"# Источники корпуса: Эпиктет\n\n{sources.BEGIN}\n{TABLE}{sources.END}\n")
+
+
+# Обоснование прав переехало из кода в сам файл: сторожим его там.
+def test_root_sources_keeps_rights_and_web_sections():
+    text = ROOT_SOURCES.read_text(encoding="utf-8")
+    assert "общественном достоянии" in text
+    assert "вёрстк" in text
+    assert "1 января 2027" in text and "On the Soul" in text
+    assert "## Веб-интерфейс" in text
+    assert text.count(sources.BEGIN) == 1 and text.count(sources.END) == 1
+    assert text.index(sources.BEGIN) < text.index("| Работа |") < text.index(sources.END)
+    assert text.index(sources.END) < text.index("## Веб-интерфейс")
