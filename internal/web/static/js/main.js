@@ -14,21 +14,21 @@ export const app = {
   convLine: '',
 
   budget() {
-    const p = this.state?.profiles.find(x => x.name === (this.profile || this.state.default));
+    const p = this.state?.profiles?.find(x => x.name === (this.profile || this.state.default));
     return p?.context_budget ?? 0;
   },
 
   async refreshState() {
     this.state = await get('/api/state');
     const sel = document.getElementById('profile');
-    sel.innerHTML = this.state.profiles.map(p =>
+    sel.innerHTML = (this.state.profiles ?? []).map(p =>
       `<option value="${esc(p.name)}">${esc(p.name)} · ${esc(p.model)}</option>`).join('');
     sel.value = this.profile || this.state.default;
     sel.onchange = () => { this.profile = sel.value; this.onContext(this.lastUsed); };
   },
 
   async refreshConvs() {
-    this.convs = await get('/api/conversations');
+    this.convs = (await get('/api/conversations')) ?? [];
     const box = document.getElementById('convs');
     box.innerHTML = '';
     for (const c of this.convs) {
@@ -62,6 +62,7 @@ export const app = {
   // onContext — шкала контекста и итоги беседы в шапке. tokens не передан —
   // меняется только шкала (например, при смене профиля).
   onContext(used, tokens, cost) {
+    used ??= 0;
     this.lastUsed = used;
     const budget = this.budget();
     const bar = document.getElementById('ctx-bar');

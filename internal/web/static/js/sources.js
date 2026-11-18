@@ -48,9 +48,10 @@ export async function openSource(b) {
   }
   try {
     const ch = await get('/api/corpus/chapter?path=' + encodeURIComponent(b.chapter));
-    const ranges = findExcerpt(ch.text, b.en || '');
+    const chText = ch.text ?? ''; // поля с omitempty на проводе бывают без ключа
+    const ranges = findExcerpt(chText, b.en || '');
     holder.innerHTML = (ranges.length ? '' : `<p class="en">${esc(b.en)}</p>`) +
-      paragraphs(ch.text, ranges) +
+      paragraphs(chText, ranges) +
       `<p class="lib-link"><a href="#/library/${encodeURI(b.chapter)}">ЧИТАТЬ В БИБЛИОТЕКЕ</a></p>`;
     holder.querySelector('mark')?.scrollIntoView({ block: 'center' });
   } catch (e) {

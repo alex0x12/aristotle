@@ -32,9 +32,10 @@ const COUNTS = ['input', 'output', 'cache_read', 'cache_write'];
 // завершённых запросов хода: ответ прервался, и недостающего провайдер не
 // сообщил. Такую сумму нельзя выдавать за точную — она с «≈»; а если в ней
 // одни нули, то считать нечего — прочерк.
-export function usageIsPartial(u) { return !u.known && COUNTS.some(k => u[k]); }
+export function usageIsPartial(u) { return !u?.known && COUNTS.some(k => u?.[k]); }
 
 export function usageText(u, cost) {
+  u ??= {}; // usage в записи журнала может отсутствовать (omitempty)
   if (!u.known && !usageIsPartial(u)) return 'токены: —';
   const pre = u.known ? '' : '≈';
   const parts = [`вход ${pre}${fmtTokens(u.input)}`];
@@ -47,6 +48,7 @@ export function usageText(u, cost) {
 
 // Токены ответа для шапки; пустая строка, если нечего показать.
 export function answerTokens(u) {
+  u ??= {};
   if (u.known) return `ответ ${fmtTokens(u.output)} ток.`;
   return usageIsPartial(u) && u.output ? `ответ ≈${fmtTokens(u.output)} ток.` : '';
 }

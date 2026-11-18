@@ -21,7 +21,8 @@ function el(html) {
 // Пустая проза — разрыв абзаца: отдельного элемента ей не нужно, отступ
 // между абзацами уже есть.
 export function blockEl(b, quotesUnknown = false) {
-  if (b.kind === 'prose') return b.text.trim() ? el(`<p>${esc(b.text)}</p>`) : null;
+  // Пустая строка приходит блоком без ключа text (omitempty на сервере): без ?? '' это TypeError.
+  if (b.kind === 'prose') return (b.text ?? '').trim() ? el(`<p>${esc(b.text)}</p>`) : null;
   if (b.kind === 'quote') {
     const mark = quotesUnknown ? '<span class="unk">сверка не сохранена</span>'
       : b.verified ? '' : '<span class="warn">нет в выдержках</span>';
@@ -34,6 +35,7 @@ export function blockEl(b, quotesUnknown = false) {
 }
 
 function metaLine(usage, cost) {
+  usage ??= {};
   const line = el(`<div class="meta-line">${esc(usageText(usage, cost))}</div>`);
   if (!usage.known) {
     line.title = usageIsPartial(usage)
@@ -90,10 +92,22 @@ export async function showDialog(center, id, app) {
     center.innerHTML = `<div class="dialog"><p class="status">беседа не открылась: ${esc(e.message)}</p></div>`;
     return;
   }
-  v.title.textContent = conv.items.length ? conv.title.toUpperCase() : 'НОВАЯ БЕСЕДА';
-  render(v, conv);
+  conv.items ??= [];
+  v.title.textContent = conv.items.length ? (conv.title ?? '').toUpperCase() : 'НОВАЯ БЕСЕДА';
   app.onContext(conv.context_used, conv.tokens, conv.cost_usd);
+  // Слушатели — до отрисовки: если она упадёт на неожиданной записи, форма всё
+  // равно должна работать, а не уходить нативным GET с перезагрузкой страницы.
+  bindInput(v, center);
+  try {
+    render(v, conv);
+  } catch (e) {
+    console.error(e);
+    v.msgs.append(el('<p class="stopped">беседа показана не полностью: ' + esc(e.message) + '</p>'));
+  }
+  syncAgain(v);
+}
 
+function bindInput(v, center) {
   center.querySelector('#ask').addEventListener('submit', e => {
     e.preventDefault();
     const text = v.q.value.trim();
@@ -185,6 +199,25 @@ async function ask(v, text, again, prev = null) {
   busy(v, true);
   syncAgain(v);
 
+  // Вопрос только что отправлен — смотрим в конец. Дальше за ответом идём, пока
+  // читатель сам не отлистал вверх. Флаг меняют только события прокрутки: наш
+  // собственный сдвиг вниз их тоже вызывает, но вверх сам контент не прокручивает.
+  // Вверх — выключаем, вернулся к концу (с запасом на строку, успевшую прийти до
+  // самого события) — включаем. Замер «далеко ли до конца» перед каждым событием
+  // потока терялся на высоте нового хода и так отключал следование насовсем.
+  const bottomGap = () => v.msgs.scrollHeight - v.msgs.scrollTop - v.msgs.clientHeight;
+  let follow = true;
+  let lastTop = v.msgs.scrollTop;
+  const onScroll = () => {
+    const top = v.msgs.scrollTop;
+    if (top < lastTop - 1) follow = false;
+    else if (bottomGap() < 80) follow = true;
+    lastTop = top;
+  };
+  v.msgs.addEventListener('scroll', onScroll);
+  const toBottom = () => { if (follow) v.msgs.scrollTop = v.msgs.scrollHeight; };
+  toBottom();
+
   // Недописанная строка, которую блоком ещё не стало: ход оборвался, а то,
   // что успело прийти, остаётся. Строка-маркер (>>) без конца не показывается.
   const keepLive = () => {
@@ -210,12 +243,11 @@ async function ask(v, text, again, prev = null) {
       throw e;
     }
     await readSSE(res, (event, d) => {
-      const stick = v.msgs.scrollHeight - v.msgs.scrollTop - v.msgs.clientHeight < 60;
       switch (event) {
         case 'delta': {
           v.status.hidden = true;
           // Законченные строки придут блоками; здесь — только недописанная.
-          liveText += d.text;
+          liveText += d.text ?? '';
           const nl = liveText.lastIndexOf('\n');
           if (nl >= 0) liveText = liveText.slice(nl + 1);
           const marker = liveText.startsWith('>>');
@@ -224,13 +256,13 @@ async function ask(v, text, again, prev = null) {
           break;
         }
         case 'block': {
-          if (d.kind === 'prose') lastProse = d.text;
+          if (d.kind === 'prose') lastProse = d.text ?? ''; // у пустой строки ключа text нет
           const e = blockEl(d);
           if (e) ans.insertBefore(e, live);
           break;
         }
-        case 'search': v.status.hidden = false; v.status.textContent = `ищу в корпусе: «${d.query}»…`; break;
-        case 'warning': addBanner(v, d.text); break;
+        case 'search': v.status.hidden = false; v.status.textContent = `ищу в корпусе: «${d.query ?? ''}»…`; break;
+        case 'warning': addBanner(v, d.text ?? ''); break;
         case 'trim': markTrim(v.msgs, d); break;
         // Расход приходит и без done: при ошибке он идёт перед error.
         case 'usage':
@@ -240,7 +272,7 @@ async function ask(v, text, again, prev = null) {
           break;
         case 'error':
           ended = 'error';
-          addBanner(v, 'ошибка: ' + d.message);
+          addBanner(v, 'ошибка: ' + (d.message ?? 'без описания'));
           notice('ответ прерван ошибкой');
           break;
         case 'done':
@@ -249,11 +281,11 @@ async function ask(v, text, again, prev = null) {
           v.app.onDone(v.id, d.title);
           break;
       }
-      if (stick) v.msgs.scrollTop = v.msgs.scrollHeight;
+      toBottom();
     });
     // Поток кончился без done и без error: сервер остановили на ходу. То, что
     // пришло, остаётся; ход журналом записан как остановленный.
-    if (!ended) { keepLive(); notice('ответ оборван: соединение закрыто'); }
+    if (!ended) { keepLive(); notice('ответ оборван: соединение закрыто'); toBottom(); }
   } catch (e) {
     if (rejected) {
       // Сервер ход не принял (нет ключа, занято…): вопрос возвращается в поле,
@@ -268,11 +300,19 @@ async function ask(v, text, again, prev = null) {
     } else if (e.name === 'AbortError') {
       keepLive();
       notice('ответ остановлен');
+      toBottom();
     } else {
+      // Сбой уже на нашей стороне (разбор события, обработчик) или обрыв сети.
+      // Соединение закрываем сами, иначе сервер дописывает ход и держит беседу
+      // занятой: следующий вопрос получил бы 409.
+      console.error(e);
+      v.controller.abort();
       keepLive();
       notice('ответ оборван: ' + e.message);
+      toBottom();
     }
   } finally {
+    v.msgs.removeEventListener('scroll', onScroll);
     if (live.classList.contains('live')) live.remove();
     v.status.hidden = true;
     v.controller = null;
