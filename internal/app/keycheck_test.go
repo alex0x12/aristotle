@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,18 +34,43 @@ func TestCheckKeyOpenAI(t *testing.T) {
 	}
 }
 
-func TestCheckKeyAnthropic(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" || r.Header.Get("x-api-key") != "sk-ant" || r.Header.Get("anthropic-version") == "" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
+// roundTripFunc — транспорт-подделка: проверка ключа Anthropic идёт на
+// фиксированный адрес, и в тестах его подменяет транспорт клиента, а не сеть.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func reply(r *http.Request, code int, header http.Header) *http.Response {
+	return &http.Response{StatusCode: code, Header: header, Body: io.NopCloser(strings.NewReader(`{"data":[]}`)), Request: r}
+}
+
+// Anthropic-провайдер адрес из профиля не читает (запросы идут на
+// api.anthropic.com), поэтому и проверка ключа идёт туда же, что бы ни стояло в
+// base_url: правленный вручную адрес невидим в интерфейсе, и ключ не должен
+// уйти по нему.
+func TestCheckKeyAnthropicUsesFixedOrigin(t *testing.T) {
+	var trapHit atomic.Bool
+	trap := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { trapHit.Store(true) }))
+	defer trap.Close()
+	for _, base := range []string{trap.URL, trap.URL + "/", ""} {
+		var got []*http.Request
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			got = append(got, r)
+			if r.Header.Get("x-api-key") != "sk-ant" || r.Header.Get("anthropic-version") == "" {
+				return reply(r, http.StatusUnauthorized, nil), nil
+			}
+			return reply(r, http.StatusOK, nil), nil
+		})}
+		p := config.Profile{Name: "c", Kind: config.KindAnthropic, BaseURL: base, Key: "sk-ant"}
+		if code, err := CheckKey(context.Background(), p, client); err != nil || code != 200 {
+			t.Fatalf("base_url %q: код %d, %v", base, code, err)
 		}
-		w.Write([]byte(`{"data":[]}`))
-	}))
-	defer srv.Close()
-	p := config.Profile{Name: "c", Kind: config.KindAnthropic, BaseURL: srv.URL, Key: "sk-ant"}
-	if code, err := CheckKey(context.Background(), p, srv.Client()); err != nil || code != 200 {
-		t.Fatalf("код %d, %v", code, err)
+		if len(got) != 1 || got[0].URL.String() != "https://api.anthropic.com/v1/models" {
+			t.Fatalf("base_url %q: запросы %v", base, got)
+		}
+	}
+	if trapHit.Load() {
+		t.Fatal("запрос ушёл на base_url профиля Anthropic")
 	}
 }
 
@@ -91,15 +117,28 @@ func TestCheckKeyDoesNotFollowRedirects(t *testing.T) {
 		http.Redirect(w, r, other.URL+"/v1/models", http.StatusFound)
 	}))
 	defer srv.Close()
-	for _, kind := range []string{config.KindAnthropic, config.KindOpenAI} {
-		p := config.Profile{Name: "x", Kind: kind, BaseURL: srv.URL, Key: "секрет-для-перенаправления"}
-		code, err := CheckKey(context.Background(), p, srv.Client())
-		if err != nil || code != http.StatusFound {
-			t.Fatalf("%s: код %d, %v", kind, code, err)
-		}
-		if leaked.Load() != nil {
-			t.Fatalf("%s: ключ ушёл по перенаправлению", kind)
-		}
+	p := config.Profile{Name: "x", Kind: config.KindOpenAI, BaseURL: srv.URL, Key: "секрет-для-перенаправления"}
+	code, err := CheckKey(context.Background(), p, srv.Client())
+	if err != nil || code != http.StatusFound {
+		t.Fatalf("openai: код %d, %v", code, err)
+	}
+	if leaked.Load() != nil {
+		t.Fatal("openai: ключ ушёл по перенаправлению")
+	}
+
+	// Anthropic: адрес фиксирован, перенаправление отдаёт сам «провайдер».
+	var requests []string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests = append(requests, r.URL.String())
+		return reply(r, http.StatusFound, http.Header{"Location": {other.URL + "/v1/models"}}), nil
+	})}
+	p = config.Profile{Name: "c", Kind: config.KindAnthropic, Key: "секрет-для-перенаправления"}
+	code, err = CheckKey(context.Background(), p, client)
+	if err != nil || code != http.StatusFound || len(requests) != 1 {
+		t.Fatalf("anthropic: код %d, %v, запросы %v", code, err, requests)
+	}
+	if leaked.Load() != nil {
+		t.Fatal("anthropic: ключ ушёл по перенаправлению")
 	}
 }
 

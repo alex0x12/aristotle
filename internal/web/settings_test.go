@@ -278,9 +278,9 @@ func TestPutSettingsOmittedBuiltinComesBackWithDefaults(t *testing.T) {
 	}
 }
 
-// Убранный профиль уносит с собой ключ из keys.json; остальные ключи целы.
-func TestPutSettingsDropsKeyOfRemovedProfile(t *testing.T) {
-	s := newTestServer(t, nil, nil)
+// savedLocalProfiles заводит профили local и other с ключами (и ключ claude).
+func savedLocalProfiles(t *testing.T, s *Server) http.Handler {
+	t.Helper()
 	h := s.Handler()
 	doc := getSettings(t, h)
 	doc.Profiles = append(doc.Profiles,
@@ -295,21 +295,123 @@ func TestPutSettingsDropsKeyOfRemovedProfile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	doc = getSettings(t, h)
+	return h
+}
+
+func withoutProfile(doc settingsDoc, name string) settingsDoc {
 	var kept []profileView
 	for _, p := range doc.Profiles {
-		if p.Name != "local" {
+		if p.Name != name {
 			kept = append(kept, p)
 		}
 	}
 	doc.Profiles = kept
+	return doc
+}
+
+func keyOf(t *testing.T, s *Server, name string) string {
+	t.Helper()
+	k, err := (keys.Store{Path: s.Paths.Keys}).Get(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
+// Убранный профиль уносит с собой ключ из keys.json, но только когда
+// пользователь убрал его сам и сказал об этом в removed; остальные ключи целы.
+func TestPutSettingsDropsKeyOfExplicitlyRemovedProfile(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	h := savedLocalProfiles(t, s)
+	doc := withoutProfile(getSettings(t, h), "local")
+	doc.Removed = []string{"local"}
 	if rec := putSettings(t, h, doc); rec.Code != 200 {
 		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 	}
 	for n, want := range map[string]string{"local": "", "other": "ключ-other", "claude": "ключ-claude"} {
-		if got, _ := st.Get(n); got != want {
+		if got := keyOf(t, s, n); got != want {
 			t.Errorf("ключ %s: %q, ожидалось %q", n, got, want)
 		}
+	}
+}
+
+// PUT заменяет документ целиком и версии не проверяет: вторая вкладка с
+// черновиком, который старше добавленного профиля, уберёт профиль из
+// настроек, но ключ не тронет — по отсутствию в документе ничего не удаляется.
+func TestPutSettingsStaleDraftDoesNotDeleteKeys(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	h := savedLocalProfiles(t, s)
+	stale := withoutProfile(getSettings(t, h), "local") // removed не назван
+	if rec := putSettings(t, h, stale); rec.Code != 200 {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := keyOf(t, s, "local"); got != "ключ-local" {
+		t.Fatalf("ключ профиля, не названного в removed: %q", got)
+	}
+	// профиль завели заново — ключ на месте
+	doc := getSettings(t, h)
+	doc.Profiles = append(doc.Profiles, profileView{Name: "local", Kind: "openai", BaseURL: "http://127.0.0.1:1/v1", Model: "m"})
+	if rec := putSettings(t, h, doc); rec.Code != 200 {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	if k := profileOf(t, ptr(getSettings(t, h)), "local").Key; k.Source != "file" {
+		t.Fatalf("ключ после повторного добавления: %+v", k)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// Имя в removed, которое всё ещё есть в документе, ключ не удаляет.
+func TestPutSettingsRemovedButStillListedKeepsKey(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	h := savedLocalProfiles(t, s)
+	doc := getSettings(t, h)
+	doc.Removed = []string{"local"}
+	if rec := putSettings(t, h, doc); rec.Code != 200 {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := keyOf(t, s, "local"); got != "ключ-local" {
+		t.Fatalf("ключ профиля, оставшегося в настройках: %q", got)
+	}
+}
+
+// removed проверяется до записи: отказ — 400 с названием поля, на диске ни
+// настроек, ни ключей не меняется.
+func TestPutSettingsValidatesRemoved(t *testing.T) {
+	cases := map[string][]string{
+		"неизвестное имя":    {"нет-такого"},
+		"встроенный профиль": {"claude"},
+		"имя дважды":         {"local", "local"},
+		"пустое имя":         {""},
+		"слишком много имён": make([]string, maxProfiles+1),
+	}
+	for i := range cases["слишком много имён"] {
+		cases["слишком много имён"][i] = fmt.Sprintf("p%d", i)
+	}
+	for name, removed := range cases {
+		s := newTestServer(t, nil, nil)
+		h := savedLocalProfiles(t, s)
+		cfgBefore, _ := os.ReadFile(s.Paths.Config)
+		keysBefore, _ := os.ReadFile(s.Paths.Keys)
+		doc := withoutProfile(getSettings(t, h), "local")
+		doc.Removed = removed
+		rec := putSettings(t, h, doc)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "removed") || !cyrillicRe.MatchString(rec.Body.String()) {
+			t.Errorf("%s: код %d: %.160s", name, rec.Code, rec.Body.String())
+		}
+		if cfgAfter, _ := os.ReadFile(s.Paths.Config); !bytes.Equal(cfgBefore, cfgAfter) {
+			t.Errorf("%s: настройки изменились", name)
+		}
+		if keysAfter, _ := os.ReadFile(s.Paths.Keys); !bytes.Equal(keysBefore, keysAfter) {
+			t.Errorf("%s: ключи изменились", name)
+		}
+	}
+	// не список
+	s := newTestServer(t, nil, nil)
+	rec := do(t, s.Handler(), http.MethodPut, "/api/settings",
+		`{"default":"deepseek","corpus_k":6,"removed":"local","profiles":[{"name":"deepseek","kind":"openai","base_url":"https://x","model":"m"}]}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "removed") {
+		t.Errorf("removed не списком: код %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -823,5 +925,31 @@ func TestKeyNeverInResponsesOrLogs(t *testing.T) {
 	all.WriteString(logs.String())
 	if strings.Contains(all.String(), "нигде-не-должен") || strings.Contains(all.String(), secret) {
 		t.Fatalf("ключ просочился:\n%s", all.String())
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Профиль Anthropic с правленным вручную base_url: проверка идёт на фиксированный
+// адрес API (здесь его перехватывает транспорт клиента — сети нет), а не туда.
+func TestCheckKeyEndpointAnthropicIgnoresBaseURL(t *testing.T) {
+	var trapHit atomic.Bool
+	trap := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { trapHit.Store(true) }))
+	defer trap.Close()
+	s := newTestServer(t, nil, nil)
+	writeConfig(t, s, fmt.Sprintf(`{"profiles":{"claude":{"base_url":%q}}}`, trap.URL))
+	(keys.Store{Path: s.Paths.Keys}).Set("claude", "sk-ant-fake-for-test")
+	var urls []string
+	s.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		urls = append(urls, r.URL.String())
+		return &http.Response{StatusCode: 200, Body: http.NoBody, Request: r}, nil
+	})}
+	if r := postCheck(t, s.Handler(), "claude"); !r.OK {
+		t.Fatalf("%+v", r)
+	}
+	if len(urls) != 1 || urls[0] != "https://api.anthropic.com/v1/models" || trapHit.Load() {
+		t.Fatalf("запросы %v, base_url получил запрос: %v", urls, trapHit.Load())
 	}
 }

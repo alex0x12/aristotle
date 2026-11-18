@@ -1,6 +1,7 @@
 package web
 
 import (
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -142,9 +143,16 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	prof, err := app.Resolve(cfg, store, profileName)
+	// s.resolve, а не app.Resolve: ошибка чтения keys.json в app несёт путь к
+	// файлу и знак из него, а в диалог идёт фиксированный текст.
+	prof, err := s.resolve(cfg, store, profileName)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		msg := err.Error()
+		if ke, ok := isKeysUnreadable(err); ok {
+			log.Printf("keys.json: %v", ke.cause)
+			msg += ": ключ профиля не прочитать"
+		}
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 	prov, err := s.providerFor(prof)

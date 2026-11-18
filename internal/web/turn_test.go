@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -748,5 +750,51 @@ func TestWhitespaceOnlyAnswerIsNotInHistory(t *testing.T) {
 				t.Fatal("после перезапуска в запросе есть сообщение из одних пробелов")
 			}
 		})
+	}
+}
+
+// Испорченный keys.json: ход с профилем, которому нужен файл, отказывает
+// фиксированным текстом — без пути к файлу и без кусков разбора (там есть знак
+// из самого файла). Ход не начинается: журнал остаётся как был, а «ещё раз» не
+// отзывает прежний ответ.
+func TestTurnWithCorruptKeysFileShowsNoPathOrParserText(t *testing.T) {
+	s := corruptKeysServer(t)
+	s.NewProvider = func(config.Profile) (provider.Provider, error) {
+		t.Fatal("провайдер создан при испорченном keys.json")
+		return nil, nil
+	}
+	writeJournal(t, s.Paths.History, convID,
+		chat.Record{Role: "user", Text: "прежний вопрос"}, chat.Record{Role: "assistant", Text: "прежний ответ\n"})
+	journal := filepath.Join(s.Paths.History, convID+".jsonl")
+	before, _ := os.ReadFile(journal)
+	h := s.Handler()
+	for _, path := range []string{"/turns", "/again"} {
+		rec := do(t, h, http.MethodPost, "/api/conversations/"+convID+path, `{"text":"вопрос","profile":"claude"}`)
+		msg := rec.Body.String()
+		if rec.Code != http.StatusBadRequest || !strings.Contains(msg, "keys.json не читается") || !cyrillicRe.MatchString(msg) {
+			t.Errorf("%s: код %d: %s", path, rec.Code, msg)
+		}
+		for _, leak := range []string{s.Paths.Keys, filepath.Dir(s.Paths.Keys), "invalid character", "ПОЛОМКА", "looking for", "sk-ant"} {
+			if strings.Contains(msg, leak) {
+				t.Errorf("%s: в ответе есть %q: %s", path, leak, msg)
+			}
+		}
+	}
+	if after, _ := os.ReadFile(journal); !bytes.Equal(before, after) {
+		t.Errorf("отказ изменил журнал беседы: %q", after)
+	}
+}
+
+// Профиль с ключом в окружении испорченный keys.json не касается: файл не читается.
+func TestTurnWithCorruptKeysFileStillWorksForEnvProfile(t *testing.T) {
+	s := corruptKeysServer(t)
+	t.Setenv("DEEPSEEK_API_KEY", "zq-из-окружения")
+	s.NewProvider = func(config.Profile) (provider.Provider, error) {
+		return &scriptedProvider{turns: [][]provider.Event{okTurn("ответ\n")}}, nil
+	}
+	s.Finder = fakeFinder{}
+	rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос","profile":"deepseek"}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "event: done") {
+		t.Fatalf("код %d: %.300s", rec.Code, rec.Body.String())
 	}
 }

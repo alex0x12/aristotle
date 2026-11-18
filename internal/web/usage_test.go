@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -122,8 +124,8 @@ func TestUsageEndpointRange(t *testing.T) {
 	}
 }
 
-// Каталога журналов нет — пустой расход, не ошибка; чужие файлы и корзина
-// в расход не попадают.
+// Каталога журналов нет — пустой расход, не ошибка; чужие файлы, чужие
+// подкаталоги и всё, что глубже trash/, в расход не попадают.
 func TestAggregateIgnoresStrayFiles(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "нет-такого")
 	if rows, total, err := aggregate(missing, time.Now(), time.Now()); err != nil || len(rows) != 0 || total.Answers != 0 {
@@ -131,12 +133,98 @@ func TestAggregateIgnoresStrayFiles(t *testing.T) {
 	}
 	dir := t.TempDir()
 	d := time.Date(2026, 11, 18, 12, 0, 0, 0, time.Local)
+	rec := chat.Record{Time: d, Role: "assistant", Profile: "x", Usage: &provider.Usage{Input: 1, Known: true}}
 	os.WriteFile(filepath.Join(dir, "заметки.txt"), []byte("не журнал"), 0o600)
 	os.WriteFile(filepath.Join(dir, "битый.jsonl"), []byte("{не json\n"), 0o600)
-	writeJournal(t, filepath.Join(dir, "trash"), "2026-11-18T09-00-00",
-		chat.Record{Time: d, Role: "assistant", Profile: "x", Usage: &provider.Usage{Input: 1, Known: true}})
-	if rows, _, err := aggregate(dir, d, d); err != nil || len(rows) != 0 {
-		t.Fatalf("строки %+v, %v", rows, err)
+	os.MkdirAll(filepath.Join(dir, "trash"), 0o700)
+	os.WriteFile(filepath.Join(dir, "trash", "заметки.txt"), []byte("не журнал"), 0o600)
+	writeJournal(t, filepath.Join(dir, "archive"), "2026-11-18T09-00-00", rec)         // чужой подкаталог
+	writeJournal(t, filepath.Join(dir, "trash", "deeper"), "2026-11-18T09-00-00", rec) // глубже trash/
+	if rows, total, err := aggregate(dir, d, d); err != nil || len(rows) != 0 || total.Answers != 0 || total.Partial {
+		t.Fatalf("строки %+v, итог %+v, %v", rows, total, err)
+	}
+}
+
+// Удаление беседы не уменьшает расход: деньги потрачены. Журнал из trash/
+// считается наравне с остальными.
+func TestAggregateCountsTrash(t *testing.T) {
+	dir := t.TempDir()
+	d := time.Date(2026, 11, 18, 12, 0, 0, 0, time.Local)
+	cost := 0.5
+	writeJournal(t, dir, "2026-11-18T09-00-00",
+		chat.Record{Time: d, Role: "assistant", Profile: "deepseek", Usage: &provider.Usage{Input: 10, Known: true}})
+	writeJournal(t, filepath.Join(dir, "trash"), "2026-11-18T08-00-00",
+		chat.Record{Time: d, Role: "assistant", Profile: "deepseek", Usage: &provider.Usage{Input: 5, Known: true}, CostUSD: &cost})
+	rows, total, err := aggregate(dir, d, d)
+	if err != nil || len(rows) != 1 || rows[0].Input != 15 || rows[0].Answers != 2 || total.CostUSD == nil || *total.CostUSD != 0.5 {
+		t.Fatalf("строки %+v, итог %+v, %v", rows, total, err)
+	}
+}
+
+// Сквозь API: беседу удалили — итог месяца в /api/state не просел.
+func TestDeletingConversationKeepsMonthTotal(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	h := s.Handler()
+	now := time.Now()
+	id := now.UTC().Format("2006-01-02T15-04-05")
+	writeJournal(t, s.Paths.History, id,
+		chat.Record{Time: now, Role: "user", Text: "вопрос"},
+		chat.Record{Time: now, Role: "assistant", Profile: "deepseek", Usage: &provider.Usage{Input: 100, Output: 20, Known: true}})
+	month := func() usageRow {
+		var st struct {
+			Month usageRow `json:"month"`
+		}
+		if err := json.Unmarshal(do(t, h, http.MethodGet, "/api/state", "").Body.Bytes(), &st); err != nil {
+			t.Fatal(err)
+		}
+		return st.Month
+	}
+	if m := month(); m.Input != 100 || m.Answers != 1 {
+		t.Fatalf("до удаления %+v", m)
+	}
+	if rec := do(t, h, http.MethodDelete, "/api/conversations/"+id, ""); rec.Code != 200 {
+		t.Fatalf("удаление: код %d", rec.Code)
+	}
+	if m := month(); m.Input != 100 || m.Output != 20 || m.Answers != 1 {
+		t.Fatalf("после удаления итог месяца просел: %+v", m)
+	}
+}
+
+// Журнал, который не прочитался (строка длиннее предела History.Load), не
+// исчезает молча: в журнале сервера строка о нём без содержимого, а итог с
+// пометкой «неполный». Прочитанное до сбоя и другие журналы считаются.
+func TestAggregateMarksUnreadableJournalPartial(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	dir := t.TempDir()
+	d := time.Date(2026, 11, 18, 12, 0, 0, 0, time.Local)
+	writeJournal(t, dir, "2026-11-18T09-00-00",
+		chat.Record{Time: d, Role: "assistant", Profile: "deepseek", Usage: &provider.Usage{Input: 10, Known: true}})
+	// за пределом Scanner (8 МиБ) — ни одна запись до неё не теряется, остальное не читается
+	f, err := os.OpenFile(filepath.Join(dir, "2026-11-18T10-00-00.jsonl"), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	good, _ := json.Marshal(chat.Record{Time: d, Role: "assistant", Profile: "claude", Usage: &provider.Usage{Input: 7, Known: true}})
+	f.Write(append(good, '\n'))
+	f.WriteString(strings.Repeat("СЕКРЕТНОЕСОДЕРЖИМОЕ", 9<<20/len("СЕКРЕТНОЕСОДЕРЖИМОЕ")+1) + "\n")
+	f.Close()
+	// журнал, начатый после конца периода, пометки не ставит
+	writeJournal(t, dir, "2026-12-30T10-00-00", chat.Record{Time: d.AddDate(0, 1, 12), Role: "assistant", Usage: &provider.Usage{Input: 1, Known: true}})
+	rows, total, err := aggregate(dir, d, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !total.Partial || total.Input != 17 || len(rows) != 2 {
+		t.Fatalf("строки %+v, итог %+v", rows, total)
+	}
+	if !strings.Contains(logs.String(), "2026-11-18T10-00-00.jsonl") || strings.Contains(logs.String(), "СЕКРЕТНОЕ") {
+		t.Fatalf("журнал сервера: %.300q", logs.String())
+	}
+	// а для периода раньше начала этого журнала пометки нет
+	if _, total, _ := aggregate(dir, d.AddDate(0, -3, 0), d.AddDate(0, -2, 0)); total.Partial {
+		t.Errorf("пометка у периода, до которого журнал не доживает: %+v", total)
 	}
 }
 

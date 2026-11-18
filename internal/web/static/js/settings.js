@@ -3,6 +3,9 @@ import { get, send, esc, fmtTokens, fmtCost } from './api.js';
 const EFFORT = ['', 'low', 'medium', 'high'];
 
 // draft — настройки, как их правит экран; уходят на сервер целиком по «СОХРАНИТЬ».
+// draft.removed — имена профилей, которые пользователь убрал сам: только по этому
+// списку сервер удаляет их ключи из keys.json. Пропавший из документа профиль без
+// имени в списке (устаревшая вкладка) ключа не лишается.
 // fresh — профили, которых на сервере ещё нет: имя у них правится, а ключ
 // сохранить нельзя (сервер знает только профили из конфига).
 let draft = null;
@@ -27,6 +30,7 @@ function settle(p) {
 
 function load(doc) {
   draft = doc;
+  draft.removed = [];
   draft.profiles = (draft.profiles ?? []).map(settle);
   fresh = new WeakSet();
   dirty = false;
@@ -43,7 +47,7 @@ function keyRow(p) {
   const n = notes[p.name];
   const note = n ? `<span class="${n.ok === false ? 'warn' : 'hint'}">${esc(n.text)}</span>` : '';
   const field = (off, hintText) => `<span class="hint">${hintText}</span>
-    <input type="password" autocomplete="off" placeholder="новый ключ" data-key="${name}"${off ? ' disabled' : ''}>`;
+    <input type="password" autocomplete="new-password" placeholder="новый ключ" data-key="${name}"${off ? ' disabled' : ''}>`;
   const btn = (act, label, off) => `<button class="btn ghost" data-act="${act}" data-name="${name}" type="button"${off ? ' disabled' : ''}>${label}</button>`;
   if (fresh.has(p)) {
     return `<span class="hint">ключ можно ввести после сохранения профиля</span>`;
@@ -131,6 +135,10 @@ function redraw(box, render) {
 // и перерисовывается вкладка (порядок профилей на сервере по имени).
 async function save(box, app, render) {
   box.querySelector('#err').hidden = true;
+  // Профиль, заведённый заново под тем же именем, больше не «убран». Сверка
+  // здесь, а не на каждую набранную букву: имя набирается по знаку, и «tmp» на
+  // пути к «tmpx» не должно вычеркнуть убранный «tmp».
+  draft.removed = draft.removed.filter(n => !draft.profiles.some(p => p.name === n));
   try {
     load(await send('PUT', '/api/settings', draft));
   } catch (e) {
@@ -192,6 +200,10 @@ function profilesTab(box, app) {
       const p = draft.profiles[+b.dataset.i];
       const withKey = !fresh.has(p) && p.key?.source === 'file';
       if (withKey && !confirm(`Убрать профиль ${p.name}? Его сохранённый ключ тоже будет удалён при сохранении настроек.`)) return;
+      // Решение убрать принято (подтверждение, если оно нужно, получено): ключ
+      // этого профиля удалится при сохранении. Заведённый на экране и не
+      // сохранённый профиль на сервере не существует — в список он не идёт.
+      if (!fresh.has(p) && !draft.removed.includes(p.name)) draft.removed.push(p.name);
       draft.profiles.splice(+b.dataset.i, 1);
       touched(box);
       redraw(box, render);

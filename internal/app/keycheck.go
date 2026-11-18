@@ -9,6 +9,11 @@ import (
 	"github.com/alex0x12/aristotle/internal/config"
 )
 
+// anthropicOrigin — адрес API Anthropic, на который ходит провайдер (умолчание
+// SDK). Окружение ANTHROPIC_BASE_URL, которое SDK тоже читает, проверка не
+// учитывает намеренно: ключ уходит только на этот адрес.
+const anthropicOrigin = "https://api.anthropic.com"
+
 // CheckKey проверяет ключ профиля бесплатным запросом — списком моделей.
 // Возвращает код ответа провайдера: 200 — ключ принят.
 //
@@ -24,11 +29,9 @@ func CheckKey(ctx context.Context, p config.Profile, client *http.Client) (int, 
 	header := http.Header{}
 	switch p.Kind {
 	case config.KindAnthropic:
-		base := p.BaseURL
-		if base == "" {
-			base = "https://api.anthropic.com"
-		}
-		url = strings.TrimSuffix(base, "/") + "/v1/models"
+		// Адрес профиля не читается: Anthropic-провайдер его не использует,
+		// и проверка ключа не должна отправить его туда, куда не ходят запросы.
+		url = anthropicOrigin + "/v1/models"
 		header.Set("x-api-key", key)
 		header.Set("anthropic-version", "2023-06-01")
 	default:

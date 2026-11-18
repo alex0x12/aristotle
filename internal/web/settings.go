@@ -28,6 +28,10 @@ type settingsDoc struct {
 	Default  string        `json:"default"`
 	CorpusK  int           `json:"corpus_k"`
 	Profiles []profileView `json:"profiles"`
+	// Removed — имена профилей, которые пользователь убрал сам в этом сеансе
+	// правки. Ключ из keys.json удаляется только у них (и только если профиля
+	// нет в новых настройках); по одному отсутствию в документе — никогда.
+	Removed []string `json:"removed,omitempty"`
 }
 
 // Пределы значений. Верхние нужны не как мнение о «разумном», а чтобы
@@ -230,25 +234,54 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "config.json не читается, настройки не сохранены: "+err.Error(), http.StatusConflict)
 		return
 	}
+	if err := checkRemoved(in.Removed, old); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := config.Save(s.Paths.Config, cfg); err != nil {
 		log.Printf("настройки не записаны: %v", err)
 		http.Error(w, "не удалось записать config.json", http.StatusInternalServerError)
 		return
 	}
-	s.dropKeysOfRemoved(store, old, cfg)
+	s.dropKeys(store, in.Removed, cfg)
 	s.handleGetSettings(w, r)
 }
 
-// dropKeysOfRemoved убирает из keys.json ключи профилей, которых в новых
-// настройках уже нет: убранный профиль не оставляет секрета на диске. Встроенные
-// не считаются — они вернутся. Неудача не отменяет сохранённых настроек.
-func (s *Server) dropKeysOfRemoved(store keys.Store, old, cur config.Config) {
+// checkRemoved проверяет список убранных профилей до всякой записи: имя должно
+// быть у сохранённого пользовательского профиля (встроенный убрать нельзя, он
+// вернётся; несуществующий — признак устаревшей вкладки или опечатки) и не
+// повторяться.
+func checkRemoved(removed []string, old config.Config) error {
+	if len(removed) > maxProfiles {
+		return fieldErr("", "removed", "не больше %d имён", maxProfiles)
+	}
+	seen := map[string]bool{}
+	for _, name := range removed {
+		_, builtin := config.Builtin().Profiles[name]
+		_, saved := old.Profiles[name]
+		switch {
+		case seen[name]:
+			return fieldErr("", "removed", "имя %q указано дважды", name)
+		case builtin:
+			return fieldErr("", "removed", "профиль %q встроенный — убрать его нельзя, он возвращается с умолчаниями", name)
+		case !saved:
+			return fieldErr("", "removed", "профиля %q нет в сохранённых настройках (экран устарел? откройте его заново)", name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+// dropKeys убирает из keys.json ключи профилей, которые пользователь убрал
+// (removed) и которых нет в новых настройках: убранный профиль не оставляет
+// секрета на диске. Только по названию в removed: PUT заменяет документ целиком
+// и версии не проверяет, поэтому отсутствие профиля в нём может быть и
+// устаревшей вкладкой — такой ключ не трогается. Неудача не отменяет
+// сохранённых настроек.
+func (s *Server) dropKeys(store keys.Store, removed []string, cur config.Config) {
 	s.keysMu.Lock()
 	defer s.keysMu.Unlock()
-	for name := range old.Profiles {
-		if _, builtin := config.Builtin().Profiles[name]; builtin {
-			continue
-		}
+	for _, name := range removed {
 		if _, kept := cur.Profiles[name]; kept {
 			continue
 		}

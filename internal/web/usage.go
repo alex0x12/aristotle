@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,12 +53,18 @@ func (r *usageRow) add(rec chat.Record) {
 	}
 }
 
-// aggregate — расход по дням и профилям из журналов каталога dir за
-// [from, to] включительно, по местным датам. Отозванные «ещё раз» ответы
-// тоже считаются: деньги за них потрачены. Ответы с known:false (оборванные,
-// неудавшиеся) тоже входят — своими частичными числами, но строка с ними
-// помечена Partial. Записи без usage (журналы до появления учёта) не считаются.
-// Корзина (trash/) — подкаталог и в расход не входит.
+// aggregate — расход по дням и профилям из журналов каталога dir и его
+// подкаталога trash/ за [from, to] включительно, по местным датам. Отозванные
+// «ещё раз» ответы тоже считаются: деньги за них потрачены. Ответы с known:false
+// (оборванные, неудавшиеся) тоже входят — своими частичными числами, но строка
+// с ними помечена Partial. Записи без usage (журналы до появления учёта) не
+// считаются. Корзина считается наравне с остальным: удаление беседы не должно
+// уменьшать итог. Других подкаталогов и вложенных в корзину aggregate не читает.
+//
+// Журнал, который не прочитался (строка длиннее предела History.Load, ошибка
+// чтения), не исчезает молча: строка о нём — в журнал сервера (без содержимого),
+// а итог помечается Partial, если журнал мог иметь ответы в периоде. К какому
+// дню и профилю относится непрочитанное, неизвестно, поэтому строки не метятся.
 func aggregate(dir string, from, to time.Time) ([]usageRow, usageRow, error) {
 	var total usageRow
 	entries, err := os.ReadDir(dir)
@@ -69,29 +76,42 @@ func aggregate(dir string, from, to time.Time) ([]usageRow, usageRow, error) {
 	}
 	lo, hi := from.Format("2006-01-02"), to.Format("2006-01-02")
 	rows := map[[2]string]*usageRow{}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		recs, err := chat.History{Path: filepath.Join(dir, e.Name())}.Load()
-		if err != nil {
-			continue
-		}
-		for _, rec := range recs {
-			if rec.Role != "assistant" || rec.Usage == nil {
+	read := func(d string, entries []os.DirEntry) {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 				continue
 			}
-			day := rec.Time.Local().Format("2006-01-02")
-			if day < lo || day > hi {
-				continue
+			recs, err := chat.History{Path: filepath.Join(d, e.Name())}.Load()
+			if err != nil {
+				// Load отдаёт и прочитанное до сбоя — оно считается.
+				log.Printf("журнал %s не прочитан целиком: %v", e.Name(), err)
+				if mayHaveAnswersBy(e.Name(), to) {
+					total.Partial = true
+				}
 			}
-			key := [2]string{day, rec.Profile}
-			if rows[key] == nil {
-				rows[key] = &usageRow{Day: day, Profile: rec.Profile}
+			for _, rec := range recs {
+				if rec.Role != "assistant" || rec.Usage == nil {
+					continue
+				}
+				day := rec.Time.Local().Format("2006-01-02")
+				if day < lo || day > hi {
+					continue
+				}
+				key := [2]string{day, rec.Profile}
+				if rows[key] == nil {
+					rows[key] = &usageRow{Day: day, Profile: rec.Profile}
+				}
+				rows[key].add(rec)
+				total.add(rec)
 			}
-			rows[key].add(rec)
-			total.add(rec)
 		}
+	}
+	read(dir, entries)
+	trash := filepath.Join(dir, "trash")
+	if te, err := os.ReadDir(trash); err == nil {
+		read(trash, te)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.Printf("корзина журналов не прочитана: %v", err)
 	}
 	out := make([]usageRow, 0, len(rows))
 	for _, r := range rows {
@@ -104,6 +124,21 @@ func aggregate(dir string, from, to time.Time) ([]usageRow, usageRow, error) {
 		return out[i].Profile < out[j].Profile
 	})
 	return out, total, nil
+}
+
+// mayHaveAnswersBy — мог ли журнал с таким именем иметь ответы не позже дня to.
+// Имя — время начала беседы в UTC (app.HistoryLayout): начатая позже конца
+// периода (с запасом на сдвиг часового пояса) ответов в нём не имеет. Имя не
+// по образцу — считаем, что мог.
+func mayHaveAnswersBy(name string, to time.Time) bool {
+	if len(name) < len("2006-01-02") {
+		return true
+	}
+	start, err := time.Parse("2006-01-02", name[:len("2006-01-02")])
+	if err != nil {
+		return true
+	}
+	return !start.After(to.AddDate(0, 0, 2))
 }
 
 // monthBounds — первый и последний день месяца now по местному времени.
