@@ -26,7 +26,8 @@ func (t Trim) Any() bool { return t.Excerpts > 0 || t.Turns > 0 }
 
 // messageChars — размер сообщения в символах, по которому ведётся оценка.
 func messageChars(m provider.Message) int {
-	n := utf8.RuneCountInString(m.Text)
+	// Рассуждение — часть контекста: сервер подмешивает его к истории.
+	n := utf8.RuneCountInString(m.Text) + utf8.RuneCountInString(m.Reasoning)
 	for _, c := range m.ToolCalls {
 		n += utf8.RuneCountInString(c.Name)
 		if b, err := json.Marshal(c.Input); err == nil {

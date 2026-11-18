@@ -189,6 +189,11 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text s
 	sess.OnSearchWarning = func(msg string) {
 		out.send("warning", map[string]string{"text": msg})
 	}
+	// Разовое предупреждение провайдера (сервер не принял параметры режима
+	// размышления) идёт тем же событием, что остальные предупреждения.
+	sess.OnNotice = func(text string) {
+		out.send("warning", map[string]string{"text": text})
+	}
 
 	journal(chat.Record{Role: "user", Text: text})
 	var partial strings.Builder
@@ -257,7 +262,7 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text s
 		return
 	}
 
-	rec.Text, rec.StopReason = res.Text, "end"
+	rec.Text, rec.StopReason, rec.Reasoning = res.Text, "end", res.Reasoning
 	if !app.AnswerKept(rec) {
 		// Пустой ответ в историю не идёт: провайдер отвергает сообщение без
 		// содержимого, а после перезапуска такого хода там тоже не будет.

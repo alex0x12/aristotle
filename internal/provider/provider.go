@@ -26,6 +26,11 @@ type Message struct {
 	Text        string
 	ToolCalls   []ToolCall
 	ToolResults []ToolResult
+	// Reasoning — рассуждение модели (reasoning_content) к этому ответу. В режиме
+	// размышления сервер требует присылать его назад в каждом следующем запросе,
+	// где есть инструменты; у старых записей журнала его нет — тогда поле не
+	// отправляется вовсе.
+	Reasoning string
 }
 
 type ToolDef struct {
@@ -51,6 +56,12 @@ const (
 	EventDone
 	// EventUsage — расход токенов запроса; приходит один раз, перед EventDone.
 	EventUsage
+	// EventReasoning — кусок рассуждения модели (Text); на экран не выводится,
+	// но сохраняется и уходит назад вместе с ответом.
+	EventReasoning
+	// EventNotice — разовое предупреждение провайдера (Text): например, что
+	// сервер не принял параметры режима размышления.
+	EventNotice
 )
 
 type Event struct {

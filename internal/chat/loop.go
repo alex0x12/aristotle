@@ -50,6 +50,11 @@ type Session struct {
 	// обращением к поиску. Холодный qmd поднимается 8-13 секунд, и без
 	// какого-либо признака работы это неотличимо от зависания.
 	OnSearchStart func(query, group string)
+
+	// OnNotice — необязательный колбэк для разовых предупреждений провайдера
+	// (например, что сервер не принял параметры режима размышления): они не
+	// срывают ход, но должны дойти до пользователя.
+	OnNotice func(text string)
 }
 
 func (s *Session) defaultK() int {
@@ -61,6 +66,10 @@ func (s *Session) defaultK() int {
 
 type TurnResult struct {
 	Text string
+	// Reasoning — рассуждение модели за весь ход, куски всех запросов подряд.
+	// В журнал идёт вместе с ответом: после перезапуска история собирается из
+	// него, а сервер требует присылать рассуждения прежних ответов назад.
+	Reasoning string
 	// Chapters — главы, которые поиск реально вернул на этом ходу, вместе
 	// с их ссылками. Пара, а не голый текст: сверка обязана проверять, что
 	// выдержка нашлась именно в главе с той ссылкой, которую заявила модель,
@@ -156,7 +165,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 		provider.Message{Role: provider.RoleUser, Text: userText})
 
 	var res TurnResult
-	var answer strings.Builder
+	var answer, allReasoning strings.Builder
 	requests := 0
 
 	for {
@@ -182,7 +191,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 			return res, err
 		}
 
-		var text strings.Builder
+		var text, reasoning strings.Builder
 		var calls []provider.ToolCall
 		var reqUsage provider.Usage
 		for stream.Next() {
@@ -198,6 +207,12 @@ func (s *Session) Turn(ctx context.Context, userText string,
 				calls = append(calls, ev.Call)
 			case provider.EventUsage:
 				reqUsage = ev.Usage
+			case provider.EventReasoning:
+				reasoning.WriteString(ev.Text)
+			case provider.EventNotice:
+				if s.OnNotice != nil {
+					s.OnNotice(ev.Text)
+				}
 			}
 		}
 		if err := stream.Err(); err != nil {
@@ -216,14 +231,24 @@ func (s *Session) Turn(ctx context.Context, userText string,
 		requests++
 		s.calibrate(reqUsage, reqChars)
 
+		// Рассуждение остаётся при своём сообщении: в следующем запросе (внутри
+		// хода, после поиска, и в следующих ходах) оно уходит назад вместе с ним.
 		s.Messages = append(s.Messages, provider.Message{
 			Role:      provider.RoleAssistant,
 			Text:      text.String(),
 			ToolCalls: calls,
+			Reasoning: reasoning.String(),
 		})
+		if reasoning.Len() > 0 {
+			if allReasoning.Len() > 0 {
+				allReasoning.WriteString("\n\n")
+			}
+			allReasoning.WriteString(reasoning.String())
+		}
 
 		if len(calls) == 0 {
 			res.Text = answer.String()
+			res.Reasoning = allReasoning.String()
 			return res, nil
 		}
 

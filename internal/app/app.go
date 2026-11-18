@@ -114,7 +114,7 @@ func replay(records []chat.Record) ([]provider.Message, []turnState) {
 				turns[n-1] = turnGone
 				continue
 			}
-			msgs = append(msgs, provider.Message{Role: provider.RoleAssistant, Text: rec.Text})
+			msgs = append(msgs, provider.Message{Role: provider.RoleAssistant, Text: rec.Text, Reasoning: rec.Reasoning})
 			turns[n-1] = turnKept
 		case chat.RoleRetract:
 			// «Ещё раз»: последний вопрос журнала и ответ на него отозваны.

@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/alex0x12/aristotle/internal/provider"
 )
@@ -62,9 +64,12 @@ func (a *accumulator) Calls() []provider.ToolCall {
 	return out
 }
 
-// buildBody — тело запроса. Потолка вывода, температуры и усилия рассуждения в
-// нём нет: настраиваемы только адрес, модель и ключ.
-func buildBody(model string, req provider.Request) map[string]any {
+// buildBody — тело запроса. Потолка вывода и температуры в нём нет: настраиваемы
+// только адрес, модель и ключ. thinking — режим размышления с наибольшим
+// усилием (параметры названы в документации DeepSeek: верхнего уровня
+// thinking.type и reasoning_effort); без него не уходят и рассуждения прежних
+// ответов — сервер, не знающий этого режима, их тоже не поймёт.
+func buildBody(model string, req provider.Request, thinking bool) map[string]any {
 	msgs := make([]map[string]any, 0, len(req.Messages)+1)
 	if req.System != "" {
 		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
@@ -79,6 +84,11 @@ func buildBody(model string, req provider.Request) map[string]any {
 			continue
 		}
 		msg := map[string]any{"role": string(m.Role), "content": m.Text}
+		// Ключа нет у записей без рассуждения (старые журналы): сервер такое
+		// принимает, а выдуманное пустое значение — неизвестно как.
+		if thinking && m.Role == provider.RoleAssistant && m.Reasoning != "" {
+			msg["reasoning_content"] = m.Reasoning
+		}
 		if len(m.ToolCalls) > 0 {
 			calls := make([]map[string]any, 0, len(m.ToolCalls))
 			for _, c := range m.ToolCalls {
@@ -99,6 +109,10 @@ func buildBody(model string, req provider.Request) map[string]any {
 		"stream":   true,
 		// Без этого поля OpenAI и OpenRouter не присылают расход вовсе.
 		"stream_options": map[string]any{"include_usage": true},
+	}
+	if thinking {
+		body["thinking"] = map[string]any{"type": "enabled"}
+		body["reasoning_effort"] = "max"
 	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))
@@ -135,8 +149,29 @@ func New(baseURL, model, key string) provider.Provider {
 	}
 }
 
-func (c *client) Stream(ctx context.Context, req provider.Request) (provider.Stream, error) {
-	payload, err := json.Marshal(buildBody(c.model, req))
+// thinkingRejected помнит адреса и модели, которые не приняли параметры режима
+// размышления: дальше запросы к ним идут без параметров сразу, а не через отказ.
+// Ключ — адрес и модель, поэтому смена любого из них в настройках снова пробует
+// параметры. Память живёт до конца процесса; предупреждение о ней — одно на ключ.
+var thinkingRejected sync.Map
+
+const thinkingRejectedNotice = "Сервер не принял параметры режима размышления (thinking, reasoning_effort); " +
+	"запрос повторён без них, дальше ответы идут без размышления."
+
+// paramRe — имена самих параметров. Подстрока «reasoning» не годится: отказ про
+// reasoning_content (ошибка в истории) не повод отключать режим.
+var paramRe = regexp.MustCompile(`\b(thinking|reasoning_effort)\b`)
+
+// rejectsThinking — отказ 400/422, в тексте которого названы параметры режима.
+func rejectsThinking(status int, text string) bool {
+	return (status == http.StatusBadRequest || status == http.StatusUnprocessableEntity) &&
+		paramRe.MatchString(text)
+}
+
+func (c *client) rejectKey() string { return c.baseURL + "\x00" + c.model }
+
+func (c *client) post(ctx context.Context, req provider.Request, thinking bool) (*http.Response, error) {
+	payload, err := json.Marshal(buildBody(c.model, req, thinking))
 	if err != nil {
 		return nil, err
 	}
@@ -147,24 +182,55 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (provider.Str
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.key)
+	return c.http.Do(httpReq)
+}
 
-	resp, err := c.http.Do(httpReq)
+// failure читает текст отказа и закрывает ответ.
+func (c *client) failure(resp *http.Response) (int, string) {
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	buf.ReadFrom(io.LimitReader(resp.Body, 64<<10))
+	// Провайдер иногда повторяет присланный ключ в тексте отказа; дальше
+	// этот текст идёт в журнал и на экран.
+	text := strings.TrimSpace(buf.String())
+	if c.key != "" {
+		text = strings.ReplaceAll(text, c.key, "…")
+	}
+	return resp.StatusCode, text
+}
+
+func (c *client) Stream(ctx context.Context, req provider.Request) (provider.Stream, error) {
+	_, known := thinkingRejected.Load(c.rejectKey())
+	thinking := !known
+	resp, err := c.post(ctx, req, thinking)
 	if err != nil {
 		return nil, err
 	}
+	notice := ""
 	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		var buf bytes.Buffer
-		buf.ReadFrom(io.LimitReader(resp.Body, 64<<10))
-		// Провайдер иногда повторяет присланный ключ в тексте отказа; дальше
-		// этот текст идёт в журнал и на экран.
-		text := strings.TrimSpace(buf.String())
-		if c.key != "" {
-			text = strings.ReplaceAll(text, c.key, "…")
+		status := resp.Status
+		code, text := c.failure(resp)
+		if !thinking || !rejectsThinking(code, text) {
+			return nil, fmt.Errorf("%s: %s", status, text)
 		}
-		return nil, fmt.Errorf("%s: %s", resp.Status, text)
+		// Один повтор без параметров; второй отказ — обычная ошибка, без цикла.
+		if resp, err = c.post(ctx, req, false); err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			status = resp.Status
+			_, text = c.failure(resp)
+			return nil, fmt.Errorf("%s: %s", status, text)
+		}
+		if _, loaded := thinkingRejected.LoadOrStore(c.rejectKey(), struct{}{}); !loaded {
+			notice = thinkingRejectedNotice
+		}
 	}
-	return &stream{body: resp.Body, sc: bufio.NewScanner(resp.Body)}, nil
+	s := &stream{body: resp.Body, sc: bufio.NewScanner(resp.Body)}
+	if notice != "" {
+		s.pending = []provider.Event{{Kind: provider.EventNotice, Text: notice}}
+	}
+	return s, nil
 }
 
 // chunkUsage — расход в потоке. Кэш у провайдеров назван по-разному:
@@ -198,8 +264,11 @@ func usageOf(u chunkUsage) provider.Usage {
 type chunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
+			Content string `json:"content"`
+			// Порядок рассуждения и вызовов в потоке в документации не описан:
+			// разбор от него не зависит. null и "" — то же, что отсутствие.
+			ReasoningContent string `json:"reasoning_content"`
+			ToolCalls        []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Function struct {
@@ -258,8 +327,15 @@ func (s *stream) Next() bool {
 		for _, tc := range choice.Delta.ToolCalls {
 			s.acc.Add(tc.Index, tc.ID, tc.Function.Name, tc.Function.Arguments)
 		}
+		var evs []provider.Event
+		if r := choice.Delta.ReasoningContent; r != "" {
+			evs = append(evs, provider.Event{Kind: provider.EventReasoning, Text: r})
+		}
 		if choice.Delta.Content != "" {
-			s.cur = provider.Event{Kind: provider.EventText, Text: choice.Delta.Content}
+			evs = append(evs, provider.Event{Kind: provider.EventText, Text: choice.Delta.Content})
+		}
+		if len(evs) > 0 {
+			s.cur, s.pending = evs[0], append(s.pending, evs[1:]...)
 			return true
 		}
 	}

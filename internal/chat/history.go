@@ -39,14 +39,19 @@ type Record struct {
 	// Profile и CostUSD — только чтение: так писали журналы до «одной модели без
 	// профилей и цен». Append их не пишет никогда, а старые записи читаются как
 	// раньше и ни на что не влияют.
-	Profile    string          `json:"profile,omitempty"`
-	Model      string          `json:"model,omitempty"`
-	Usage      *provider.Usage `json:"usage,omitempty"`
-	CostUSD    *float64        `json:"cost_usd,omitempty"`
-	Quotes     []Quote         `json:"quotes,omitempty"`
-	StopReason string          `json:"stop_reason,omitempty"` // end, cancelled, error
-	Excerpts   int             `json:"excerpts,omitempty"`    // trim
-	Turns      int             `json:"turns,omitempty"`       // trim
+	Profile string          `json:"profile,omitempty"`
+	Model   string          `json:"model,omitempty"`
+	Usage   *provider.Usage `json:"usage,omitempty"`
+	CostUSD *float64        `json:"cost_usd,omitempty"`
+	Quotes  []Quote         `json:"quotes,omitempty"`
+	// Reasoning — рассуждение модели к ответу (режим размышления). Журнал —
+	// единственное, из чего история собирается после перезапуска, а сервер
+	// требует присылать рассуждения прежних ответов назад; интерфейс его не
+	// показывает и не отдаёт.
+	Reasoning  string `json:"reasoning,omitempty"`
+	StopReason string `json:"stop_reason,omitempty"` // end, cancelled, error
+	Excerpts   int    `json:"excerpts,omitempty"`    // trim
+	Turns      int    `json:"turns,omitempty"`       // trim
 }
 
 const titleLen = 60

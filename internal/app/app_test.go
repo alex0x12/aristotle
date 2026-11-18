@@ -1,7 +1,10 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -476,5 +479,35 @@ func TestResumeMessagesRollsBackWhitespaceOnlyAnswer(t *testing.T) {
 				t.Errorf("%s: после отзыва последним стоит удавшийся ход, LastTurnKept = false", name)
 			}
 		}
+	}
+}
+
+// Рассуждение ответа восстанавливается из журнала; у записей без него (старые
+// журналы) его просто нет — сообщение уходит серверу без reasoning_content.
+func TestResumeMessagesRestoresReasoning(t *testing.T) {
+	msgs := ResumeMessages([]chat.Record{
+		{Role: "user", Text: "в1"},
+		{Role: "assistant", Text: "о1"}, // журнал до режима размышления
+		{Role: "user", Text: "в2"},
+		{Role: "assistant", Text: "о2", Reasoning: "думал над вторым", StopReason: "end"},
+	})
+	if len(msgs) != 4 || msgs[1].Reasoning != "" || msgs[3].Reasoning != "думал над вторым" {
+		t.Fatalf("история: %+v", msgs)
+	}
+}
+
+// Запись с рассуждением переживает журнал целиком (в файле поле reasoning).
+func TestReasoningSurvivesJournalRoundTrip(t *testing.T) {
+	h := chat.History{Path: filepath.Join(t.TempDir(), "ж.jsonl")}
+	if err := h.Append(chat.Record{Role: "assistant", Text: "о", Reasoning: "р"}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := h.Load()
+	if err != nil || len(recs) != 1 || recs[0].Reasoning != "р" {
+		t.Fatalf("%+v, %v", recs, err)
+	}
+	raw, _ := os.ReadFile(h.Path)
+	if !strings.Contains(string(raw), `"reasoning":"р"`) {
+		t.Fatalf("в файле нет поля reasoning: %s", raw)
 	}
 }

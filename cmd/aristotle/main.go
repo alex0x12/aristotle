@@ -106,6 +106,9 @@ func main() {
 		OnSearchStart: func(query, group string) {
 			fmt.Fprintf(os.Stderr, "[ищу в корпусе: %s]\n", query)
 		},
+		OnNotice: func(text string) {
+			fmt.Fprintln(os.Stderr, "предупреждение:", text)
+		},
 	}
 
 	if *evalPath != "" {
@@ -218,7 +221,7 @@ func main() {
 		}
 		usage := res.Usage
 		appendHistory(chat.Record{Role: "assistant", Text: res.Text,
-			Model: conn.Model, Usage: &usage,
+			Reasoning: res.Reasoning, Model: conn.Model, Usage: &usage,
 			Quotes: app.QuotesOf(blocks), StopReason: "end"})
 		fmt.Fprintln(os.Stderr, app.UsageLine(res.Usage))
 		if res.Trim.Any() {
