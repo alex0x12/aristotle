@@ -10,6 +10,7 @@ import (
 	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/keys"
 	"github.com/alex0x12/aristotle/internal/provider"
+	"github.com/alex0x12/aristotle/internal/render"
 )
 
 // TestResumeMessagesRestoresRoles закрывает дефект №2 итогового ревью:
@@ -357,5 +358,45 @@ func TestSwitchProfileUsesKeyFromFileWhenEnvUnset(t *testing.T) {
 	}
 	if KeySource(profile) != "file" {
 		t.Fatalf("источник %q", KeySource(profile))
+	}
+}
+
+func TestResumeMessagesHonoursRetract(t *testing.T) {
+	records := []chat.Record{
+		{Role: "user", Text: "вопрос"},
+		{Role: "assistant", Text: "первый ответ"},
+		{Role: chat.RoleRetract},
+		{Role: "user", Text: "вопрос"},
+		{Role: "assistant", Text: "второй ответ"},
+		{Role: chat.RoleMeta, Title: "заголовок"},
+		{Role: chat.RoleTrim, Excerpts: 1},
+	}
+	got := ResumeMessages(records)
+	if len(got) != 2 || got[1].Text != "второй ответ" {
+		t.Fatalf("ResumeMessages = %+v", got)
+	}
+}
+
+// В журнал идут только врезки: проза и пометки восстанавливаются из текста
+// ответа, а сверка — нет.
+func TestQuotesOfKeepsOnlyQuotes(t *testing.T) {
+	blocks := []render.Block{
+		{Kind: render.BlockProse, Text: "вступление"},
+		{Kind: render.BlockQuote, Cite: "Nicomachean Ethics II.1", En: "habit", Ru: "привычка",
+			Verified: true, Chapter: "nicomachean-ethics/ii/01.md"},
+		{Kind: "вывод", Text: "середина"},
+		{Kind: render.BlockQuote, Cite: "Politics I.2", En: "polis"},
+	}
+	want := []chat.Quote{
+		{Cite: "Nicomachean Ethics II.1", En: "habit", Ru: "привычка", Verified: true,
+			Chapter: "nicomachean-ethics/ii/01.md"},
+		{Cite: "Politics I.2", En: "polis"},
+	}
+	got := QuotesOf(blocks)
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("QuotesOf = %+v, ожидалось %+v", got, want)
+	}
+	if QuotesOf(nil) != nil {
+		t.Fatal("без врезок результат пуст")
 	}
 }

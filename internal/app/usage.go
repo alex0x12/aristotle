@@ -4,8 +4,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/alex0x12/aristotle/internal/chat"
 	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/provider"
+	"github.com/alex0x12/aristotle/internal/render"
 )
 
 // FormatTokens — число с пробелами между тысячами: 12 400.
@@ -49,4 +51,16 @@ func Cost(p *config.Prices, u provider.Usage) *float64 {
 	c := (float64(u.Input)*p.Input + float64(u.Output)*p.Output +
 		float64(u.CacheRead)*p.CacheRead + float64(u.CacheWrite)*p.CacheWrite) / 1e6
 	return &c
+}
+
+// QuotesOf — врезки ответа для журнала.
+func QuotesOf(blocks []render.Block) []chat.Quote {
+	var out []chat.Quote
+	for _, b := range blocks {
+		if b.Kind != render.BlockQuote {
+			continue
+		}
+		out = append(out, chat.Quote{Cite: b.Cite, En: b.En, Ru: b.Ru, Verified: b.Verified, Chapter: b.Chapter})
+	}
+	return out
 }

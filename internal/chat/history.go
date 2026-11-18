@@ -6,13 +6,76 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/alex0x12/aristotle/internal/provider"
 )
 
+// Роли служебных записей журнала. Восстановление беседы их пропускает,
+// кроме retract.
+const (
+	RoleMeta    = "meta"    // заголовок беседы; действует последний
+	RoleTrim    = "trim"    // где проведена граница контекста
+	RoleRetract = "retract" // «ещё раз»: последний вопрос с ответом отозваны
+)
+
+// Quote — врезка ответа с результатом сверки. Сверка зависит от глав,
+// пришедших на этом ходу, а они не сохраняются, поэтому результат пишется
+// в журнал сразу.
+type Quote struct {
+	Cite     string `json:"cite"`
+	En       string `json:"en"`
+	Ru       string `json:"ru"`
+	Verified bool   `json:"verified"`
+	Chapter  string `json:"chapter,omitempty"`
+}
+
 type Record struct {
-	Time time.Time `json:"time"`
-	Role string    `json:"role"`
-	Text string    `json:"text"`
+	Time       time.Time       `json:"time"`
+	Role       string          `json:"role"`
+	Text       string          `json:"text"`
+	Title      string          `json:"title,omitempty"`
+	Profile    string          `json:"profile,omitempty"`
+	Model      string          `json:"model,omitempty"`
+	Usage      *provider.Usage `json:"usage,omitempty"`
+	CostUSD    *float64        `json:"cost_usd,omitempty"`
+	Quotes     []Quote         `json:"quotes,omitempty"`
+	StopReason string          `json:"stop_reason,omitempty"` // end, cancelled, error
+	Excerpts   int             `json:"excerpts,omitempty"`    // trim
+	Turns      int             `json:"turns,omitempty"`       // trim
+}
+
+const titleLen = 60
+
+// CutTitle — строка в одну линию не длиннее 60 символов, с многоточием.
+func CutTitle(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= titleLen {
+		return s
+	}
+	return strings.TrimSpace(string(r[:titleLen-1])) + "…"
+}
+
+// TitleOf — заголовок беседы: последняя запись meta, иначе первый вопрос,
+// иначе пусто.
+func TitleOf(records []Record) string {
+	title := ""
+	for _, r := range records {
+		if r.Role == RoleMeta && strings.TrimSpace(r.Title) != "" {
+			title = r.Title
+		}
+	}
+	if title != "" {
+		return title
+	}
+	for _, r := range records {
+		if r.Role == "user" && strings.TrimSpace(r.Text) != "" {
+			return CutTitle(r.Text)
+		}
+	}
+	return ""
 }
 
 // History — журнал беседы в JSONL. Формат выбран ради дописывания без

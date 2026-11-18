@@ -171,10 +171,16 @@ func main() {
 		// пустой список.
 		var chapters []corpus.Chapter
 		parser := &render.Parser{}
+		// asm собирает те же события в блоки: результат сверки зависит от
+		// глав этого хода, поэтому врезки уходят в журнал сразу вместе с
+		// ответом.
+		asm := &render.Assembler{}
+		var blocks []render.Block
 		res, err := session.Turn(context.Background(), line,
 			func(delta string) {
 				for _, ev := range parser.Write(delta) {
 					printer.Handle(ev, chapters)
+					blocks = append(blocks, asm.Handle(ev, chapters)...)
 				}
 			},
 			func(cs []corpus.Chapter) {
@@ -187,8 +193,18 @@ func main() {
 		}
 		for _, ev := range parser.Flush() {
 			printer.Handle(ev, chapters)
+			blocks = append(blocks, asm.Handle(ev, chapters)...)
 		}
-		appendHistory(chat.Record{Role: "assistant", Text: res.Text})
+		blocks = append(blocks, asm.Flush()...)
+		if res.Trim.Any() {
+			appendHistory(chat.Record{Role: chat.RoleTrim,
+				Excerpts: res.Trim.Excerpts, Turns: res.Trim.Turns})
+		}
+		usage := res.Usage
+		appendHistory(chat.Record{Role: "assistant", Text: res.Text,
+			Profile: profile.Name, Model: profile.Model,
+			Usage: &usage, CostUSD: app.Cost(profile.Prices, usage),
+			Quotes: app.QuotesOf(blocks), StopReason: "end"})
 		fmt.Fprintln(os.Stderr, app.UsageLine(res.Usage))
 		if res.Trim.Any() {
 			fmt.Fprintf(os.Stderr, "[контекст: опущено выдержек %d, ходов %d]\n",

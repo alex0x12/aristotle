@@ -152,6 +152,8 @@ func ProfileNames(cfg config.Config) []string {
 // вопрос записан, ответ — нет. Хвостовые записи с ролью user, оставшиеся без
 // ответа ассистента, поэтому отбрасываются: иначе следующий ход дописывает
 // вторую подряд реплику user, а API такое отвергает.
+//
+// Запись retract отзывает последний вопрос с ответом — так журнал помнит «ещё раз».
 func ResumeMessages(records []chat.Record) []provider.Message {
 	msgs := make([]provider.Message, 0, len(records))
 	for _, rec := range records {
@@ -164,6 +166,15 @@ func ResumeMessages(records []chat.Record) []provider.Message {
 				continue
 			}
 			role = provider.RoleAssistant
+		case chat.RoleRetract:
+			// «Ещё раз»: последний вопрос и ответ на него отозваны.
+			if n := len(msgs); n > 0 && msgs[n-1].Role == provider.RoleAssistant {
+				msgs = msgs[:n-1]
+			}
+			if n := len(msgs); n > 0 && msgs[n-1].Role == provider.RoleUser {
+				msgs = msgs[:n-1]
+			}
+			continue
 		default:
 			continue
 		}
