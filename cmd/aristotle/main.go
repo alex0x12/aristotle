@@ -186,5 +186,12 @@ func main() {
 		}
 		appendHistory(chat.Record{Role: "assistant", Text: res.Text})
 		fmt.Fprintln(os.Stderr, app.UsageLine(res.Usage))
+		if res.Trim.Any() {
+			fmt.Fprintf(os.Stderr, "[контекст: опущено выдержек %d, ходов %d]\n",
+				res.Trim.Excerpts, res.Trim.Turns)
+		}
+		if res.OverBudget {
+			fmt.Fprintln(os.Stderr, "[контекст: текущий ход сам больше бюджета — отправлен целиком]")
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/provider"
@@ -22,6 +23,15 @@ type Session struct {
 	Corpus   Finder
 	System   string
 	Messages []provider.Message
+
+	// Budget — потолок входа запроса в токенах; 0 — без урезания.
+	Budget int
+	// LastPrompt — сколько токенов ушло на вход последнего запроса: по
+	// расходу провайдера, а если он не сообщён — по оценке.
+	LastPrompt int
+	// tokenRatio — токенов на символ по последнему запросу с известным
+	// расходом; 0 — ещё не измерено, берётся DefaultRatio.
+	tokenRatio float64
 
 	// OnSearchWarning — необязательный колбэк для предупреждений, которые
 	// не должны срывать ход, но обязаны дойти до пользователя, а не
@@ -50,6 +60,11 @@ type TurnResult struct {
 	// Usage — расход всех запросов хода (обращения к поиску — отдельные
 	// запросы). Known — только если каждый запрос сообщил свой расход.
 	Usage provider.Usage
+	// Trim — что не вошло в последний запрос хода. Сообщения хода только
+	// прибавляются, поэтому урезание последнего запроса — самое сильное.
+	Trim Trim
+	// OverBudget — текущий ход сам не влез в бюджет и ушёл как есть.
+	OverBudget bool
 }
 
 func argString(input map[string]any, key string) string {
@@ -132,16 +147,19 @@ func (s *Session) Turn(ctx context.Context, userText string,
 	requests := 0
 
 	for {
-		req := provider.Request{
-			System:   s.System,
-			Messages: s.Messages,
-		}
 		// Потолок обеспечивается устройством, а не только текстовой
 		// пометкой: как только он достигнут, инструмент физически не
 		// предлагается, и модель не может вызвать его снова.
+		var tools []provider.ToolDef
 		if res.Iterations < MaxToolIterations {
-			req.Tools = []provider.ToolDef{provider.SearchCorpusTool()}
+			tools = []provider.ToolDef{provider.SearchCorpusTool()}
 		}
+		fixed := utf8.RuneCountInString(s.System) + toolsChars(tools)
+		msgs, trim, fits := s.view(fixed, baseLen)
+		res.Trim, res.OverBudget = trim, !fits
+		reqChars := fixed + messagesChars(msgs)
+
+		req := provider.Request{System: s.System, Messages: msgs, Tools: tools}
 		stream, err := s.Provider.Stream(ctx, req)
 		if err != nil {
 			s.Messages = s.Messages[:baseLen]
@@ -179,6 +197,7 @@ func (s *Session) Turn(ctx context.Context, userText string,
 			res.Usage = res.Usage.Add(reqUsage)
 		}
 		requests++
+		s.calibrate(reqUsage, reqChars)
 
 		s.Messages = append(s.Messages, provider.Message{
 			Role:      provider.RoleAssistant,
