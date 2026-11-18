@@ -179,8 +179,8 @@ func TestCancelledTurnKeepsPartialAnswer(t *testing.T) {
 	if last.Role != "assistant" || last.Text != "Начало ответа" || last.StopReason != "cancelled" {
 		t.Fatalf("последняя запись %+v", last)
 	}
-	if n := len(s.conv(convID).session.Messages); n != 0 {
-		t.Fatalf("в сессии %d сообщений, ожидалось 0: остановленный ход откатан целиком, как после перезапуска", n)
+	if n := len(s.conv(convID).session.Messages); n != 2 {
+		t.Fatalf("в сессии %d сообщений, ожидалось 2 (вопрос и начало ответа)", n)
 	}
 }
 
@@ -428,16 +428,20 @@ func TestRequestsDuringRunningTurn(t *testing.T) {
 }
 
 // planProvider отвечает на запросы по заранее заданному плану исходов: ok,
-// empty (ответ без текста), fail (отказ провайдера), cancel-empty и
-// cancel-partial (клиент уходит до первого слова и после начала ответа).
-// Остановку делает сам провайдер, вызывая cancel, — без пауз и гонок.
+// empty (ответ без текста), fail (отказ провайдера), fail-partial (обрыв
+// потока после начала ответа), cancel-empty и cancel-partial (клиент уходит
+// до первого слова и после начала ответа). Остановку делает сам провайдер,
+// вызывая cancel, — без пауз и гонок. Сообщения каждого запроса копируются:
+// сессия потом перезаписывает свой срез.
 type planProvider struct {
-	plan   []string
-	n      int
-	cancel context.CancelFunc // отмена запроса, который обслуживается сейчас
+	plan     []string
+	n        int
+	cancel   context.CancelFunc // отмена запроса, который обслуживается сейчас
+	requests [][]provider.Message
 }
 
-func (p *planProvider) Stream(ctx context.Context, _ provider.Request) (provider.Stream, error) {
+func (p *planProvider) Stream(ctx context.Context, req provider.Request) (provider.Stream, error) {
+	p.requests = append(p.requests, append([]provider.Message(nil), req.Messages...))
 	outcome := p.plan[p.n]
 	p.n++
 	switch outcome {
@@ -447,6 +451,8 @@ func (p *planProvider) Stream(ctx context.Context, _ provider.Request) (provider
 		return &scriptedStream{events: []provider.Event{{Kind: provider.EventDone, StopReason: "end_turn"}}}, nil
 	case "fail":
 		return nil, errors.New("сбой провайдера")
+	case "fail-partial":
+		return &cancelStream{ctx: ctx, partial: "начало ответа", fail: errors.New("обрыв потока")}, nil
 	case "cancel-empty":
 		return &cancelStream{ctx: ctx, cancel: p.cancel}, nil
 	case "cancel-partial":
@@ -455,10 +461,13 @@ func (p *planProvider) Stream(ctx context.Context, _ provider.Request) (provider
 	return nil, fmt.Errorf("неизвестный исход %q", outcome)
 }
 
+// cancelStream отдаёт начало ответа (если есть) и обрывается: отменой запроса
+// или, если задан fail, ошибкой потока.
 type cancelStream struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	partial string
+	fail    error
 	sent    bool
 	cur     provider.Event
 }
@@ -469,12 +478,19 @@ func (s *cancelStream) Next() bool {
 		s.cur = provider.Event{Kind: provider.EventText, Text: s.partial}
 		return true
 	}
-	s.cancel()
+	if s.cancel != nil {
+		s.cancel()
+	}
 	return false
 }
 func (s *cancelStream) Event() provider.Event { return s.cur }
-func (s *cancelStream) Err() error            { return s.ctx.Err() }
-func (s *cancelStream) Close() error          { return nil }
+func (s *cancelStream) Err() error {
+	if s.fail != nil {
+		return s.fail
+	}
+	return s.ctx.Err()
+}
+func (s *cancelStream) Close() error { return nil }
 
 type turnStep struct {
 	again   bool
@@ -515,7 +531,7 @@ func TestRestartRestoresTheLiveSession(t *testing.T) {
 		"ok, ошибка, ещё раз":                        {{false, ok}, {false, "fail"}, {again, ok}},
 		"ok, остановка с текстом, ещё раз, ok":       {{false, ok}, {false, "cancel-partial"}, {again, ok}, {false, ok}},
 		"ещё раз сразу после ok":                     {{false, ok}, {again, ok}},
-		"первый ход остановлен, потом ok":            {{false, "cancel-empty"}, {false, ok}},
+		"остановка до слова, ok":                     {{false, "cancel-empty"}, {false, ok}},
 		"ошибка, остановка с текстом, ok":            {{false, "fail"}, {false, "cancel-partial"}, {false, ok}},
 		"ok, пустой ответ, ok":                       {{false, ok}, {false, "empty"}, {false, ok}},
 		"ok, ok, ещё раз остановлен, ещё раз":        {{false, ok}, {false, ok}, {again, "cancel-empty"}, {again, ok}},
@@ -524,6 +540,14 @@ func TestRestartRestoresTheLiveSession(t *testing.T) {
 		"ошибка, ещё раз с остановкой, ещё раз":      {{false, ok}, {false, "fail"}, {again, "cancel-partial"}, {again, ok}},
 		"пустой ответ, ещё раз":                      {{false, ok}, {false, "empty"}, {again, ok}},
 		"ok, ещё раз с остановкой с текстом, ok, ok": {{false, ok}, {again, "cancel-partial"}, {false, ok}, {false, ok}},
+		"ok, остановка с текстом, новый вопрос":      {{false, ok}, {false, "cancel-partial"}, {false, ok}},
+		"ok, остановка с текстом, ещё раз":           {{false, ok}, {false, "cancel-partial"}, {again, ok}},
+		"остановка с текстом, ещё раз, ok":           {{false, "cancel-partial"}, {again, ok}, {false, ok}},
+		"ошибка с началом ответа, ok":                {{false, "fail-partial"}, {false, ok}},
+		"ok, ошибка с началом ответа, ok":            {{false, ok}, {false, "fail-partial"}, {false, ok}},
+		"ok, ошибка с началом ответа, ещё раз":       {{false, ok}, {false, "fail-partial"}, {again, ok}},
+		"ok, остановка до слова, ещё раз":            {{false, ok}, {false, "cancel-empty"}, {again, ok}},
+		"две остановки с текстом подряд, ok":         {{false, "cancel-partial"}, {false, "cancel-partial"}, {false, ok}},
 	}
 	for name, steps := range sequences {
 		t.Run(name, func(t *testing.T) {
@@ -556,7 +580,7 @@ func TestRestartRestoresTheLiveSession(t *testing.T) {
 
 			// Каждый шаг дошёл до своего исхода, а не до какого-то соседнего.
 			reasons := map[string]string{"ok": "end", "empty": "end", "fail": "error",
-				"cancel-empty": "cancelled", "cancel-partial": "cancelled"}
+				"fail-partial": "error", "cancel-empty": "cancelled", "cancel-partial": "cancelled"}
 			var wantReasons, gotReasons []string
 			for _, st := range steps {
 				wantReasons = append(wantReasons, reasons[st.outcome])
@@ -585,5 +609,45 @@ func TestRestartRestoresTheLiveSession(t *testing.T) {
 				t.Fatalf("роли не чередуются: живая %s, восстановленная %s", flatMessages(live), flatMessages(sess.Messages))
 			}
 		})
+	}
+}
+
+// Остановка посреди ответа: следующий вопрос («продолжай») уходит модели вместе
+// с остановленным вопросом и тем, что она успела сказать, — и до перезапуска,
+// и после него. Это то, ради чего остановленный ход остаётся в истории.
+func TestFollowUpAfterStopSeesStoppedAnswer(t *testing.T) {
+	p := &planProvider{plan: []string{"ok", "cancel-partial", "ok"}}
+	s := newTestServer(t, p, fakeFinder{})
+	h := s.Handler()
+	for i, outcome := range p.plan {
+		ctx, cancel := context.WithCancel(context.Background())
+		p.cancel = cancel
+		req := httptest.NewRequest(http.MethodPost, "/api/conversations/"+convID+"/turns",
+			strings.NewReader(fmt.Sprintf(`{"text":"вопрос %d"}`, i+1))).WithContext(ctx)
+		req.Host = "127.0.0.1:8337"
+		req.Header.Set("Origin", "http://127.0.0.1:8337")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		cancel()
+		if rec.Code != 200 {
+			t.Fatalf("шаг %d (%s): код %d", i+1, outcome, rec.Code)
+		}
+	}
+	want := "user:вопрос 1 | assistant:ответ 1 | user:вопрос 2 | assistant:начало ответа | user:вопрос 3"
+	if got := flatMessages(p.requests[2]); got != want {
+		t.Fatalf("запрос после остановки:\n  %s\nожидалось:\n  %s", got, want)
+	}
+
+	// После перезапуска следующий запрос видит ту же историю.
+	p2 := &planProvider{plan: []string{"ok"}}
+	s2 := New(s.Root, s.Paths, 8337)
+	s2.System, s2.Finder = s.System, s.Finder
+	s2.NewProvider = func(config.Profile) (provider.Provider, error) { return p2, nil }
+	if rec := do(t, s2.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"вопрос 4"}`); rec.Code != 200 {
+		t.Fatalf("после перезапуска: код %d", rec.Code)
+	}
+	want = "user:вопрос 1 | assistant:ответ 1 | user:вопрос 2 | assistant:начало ответа | user:вопрос 3 | assistant:ответ 3 | user:вопрос 4"
+	if got := flatMessages(p2.requests[0]); got != want {
+		t.Fatalf("запрос после перезапуска:\n  %s\nожидалось:\n  %s", got, want)
 	}
 }

@@ -228,11 +228,17 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, 
 	if err != nil {
 		rec.Text = partial.String()
 		if r.Context().Err() != nil {
-			// Остановлено пользователем. Turn откатил ход из сессии целиком, и
-			// так и остаётся: журнал и экран помнят вопрос и начало ответа, а
-			// для модели такого хода нет — как после перезапуска, когда
-			// сессия соберётся из журнала (app.AnswerKept).
+			// Остановлено пользователем. Turn откатил ход из сессии, а журнал
+			// его помнит — возвращаем в сессию вопрос и начало ответа, чтобы
+			// следующий ход видел то же, что видит человек (и «продолжай»
+			// имело смысл). После перезапуска сессия соберётся из журнала так
+			// же (app.AnswerKept); остановка до первого слова хода не оставляет.
 			rec.StopReason = "cancelled"
+			if app.AnswerKept(rec) {
+				sess.Messages = append(sess.Messages,
+					provider.Message{Role: provider.RoleUser, Text: text},
+					provider.Message{Role: provider.RoleAssistant, Text: rec.Text})
+			}
 			journal(rec)
 			return
 		}

@@ -414,16 +414,15 @@ func flat(msgs []provider.Message) string {
 	return out
 }
 
-// Живая сессия откатывает неудавшийся и остановленный ход целиком (chat.Turn),
-// поэтому после перезапуска такой ход не должен возвращаться — иначе рядом
-// окажутся два вопроса подряд, а часть провайдеров такое отвергает.
-func TestResumeMessagesRollsBackFailedAndStoppedTurns(t *testing.T) {
+// Живая сессия откатывает ход с ошибкой и ход, остановленный до первого слова
+// (chat.Turn), поэтому после перезапуска такой ход не должен возвращаться —
+// иначе рядом окажутся два вопроса подряд, а часть провайдеров такое отвергает.
+func TestResumeMessagesRollsBackFailedAndEmptyStoppedTurns(t *testing.T) {
 	cases := []struct {
 		name string
 		stop chat.Record // запись ответа на второй вопрос
 	}{
 		{"остановлен до первого слова", chat.Record{Role: "assistant", StopReason: "cancelled"}},
-		{"остановлен с началом ответа", chat.Record{Role: "assistant", Text: "начало ответа", StopReason: "cancelled"}},
 		{"ошибка без текста", chat.Record{Role: "assistant", StopReason: "error"}},
 		{"ошибка с началом ответа", chat.Record{Role: "assistant", Text: "начало ответа", StopReason: "error"}},
 	}
@@ -444,14 +443,35 @@ func TestResumeMessagesRollsBackFailedAndStoppedTurns(t *testing.T) {
 	}
 }
 
+// Остановленный ход с началом ответа живая сессия оставляет: вопрос и
+// сказанное, чтобы «продолжай» после Stop имело смысл. Так же его
+// восстанавливает журнал.
+func TestResumeMessagesKeepsStoppedTurnWithPartialAnswer(t *testing.T) {
+	records := []chat.Record{
+		{Role: "user", Text: "q1"},
+		{Role: "assistant", Text: "a1", StopReason: "end"},
+		{Role: "user", Text: "q2"},
+		{Role: "assistant", Text: "начало ответа", StopReason: "cancelled"},
+		{Role: "user", Text: "продолжай"},
+		{Role: "assistant", Text: "a3", StopReason: "end"},
+	}
+	got := flat(ResumeMessages(records))
+	want := "user:q1 | assistant:a1 | user:q2 | assistant:начало ответа | user:продолжай | assistant:a3"
+	if got != want {
+		t.Fatalf("%s, ожидалось %s", got, want)
+	}
+}
+
 // retract отзывает последний вопрос журнала. Если этот ход откатан, в истории
-// модели его нет, и отзыв не должен снять предыдущий, удавшийся ход.
+// модели его нет, и отзыв не должен снять предыдущий, удавшийся ход; если ход
+// остановлен с текстом и в истории стоит, отзыв снимает ровно эту пару.
 func TestResumeMessagesRetractAfterRolledBackTurnKeepsEarlierTurn(t *testing.T) {
 	cases := []struct {
 		name string
 		stop chat.Record
 	}{
 		{"после ошибки", chat.Record{Role: "assistant", StopReason: "error"}},
+		{"после ошибки с началом ответа", chat.Record{Role: "assistant", Text: "начало", StopReason: "error"}},
 		{"после остановки с текстом", chat.Record{Role: "assistant", Text: "начало", StopReason: "cancelled"}},
 		{"после остановки без текста", chat.Record{Role: "assistant", StopReason: "cancelled"}},
 	}
@@ -534,14 +554,17 @@ func TestLastTurnKept(t *testing.T) {
 	}{
 		{"нет записей", nil, false},
 		{"ход закончился", []chat.Record{u, {Role: "assistant", Text: "а", StopReason: "end"}}, true},
-		{"ошибка", []chat.Record{u, {Role: "assistant", Text: "начало", StopReason: "error"}}, false},
-		{"остановка с началом ответа", []chat.Record{u, {Role: "assistant", Text: "начало", StopReason: "cancelled"}}, false},
+		{"ошибка", []chat.Record{u, {Role: "assistant", StopReason: "error"}}, false},
+		{"ошибка с началом ответа", []chat.Record{u, {Role: "assistant", Text: "начало", StopReason: "error"}}, false},
+		{"остановка с началом ответа", []chat.Record{u, {Role: "assistant", Text: "начало", StopReason: "cancelled"}}, true},
 		{"остановка до первого слова", []chat.Record{u, {Role: "assistant", StopReason: "cancelled"}}, false},
 		{"пустой ответ", []chat.Record{u, {Role: "assistant", StopReason: "end"}}, false},
 		{"запись командной строки", []chat.Record{u, {Role: "assistant", Text: "а"}}, true},
 		{"ответа нет", []chat.Record{u, {Role: "assistant", Text: "а", StopReason: "end"}, u}, false},
 		{"служебные записи в хвосте", []chat.Record{u, {Role: "assistant", Text: "а", StopReason: "end"}, {Role: chat.RoleMeta, Title: "т"}}, true},
 		{"ход после сбоя", []chat.Record{u, {Role: "assistant", StopReason: "error"}, {Role: chat.RoleRetract}, u, {Role: "assistant", Text: "а", StopReason: "end"}}, true},
+		{"отзыв остановленного с текстом: последним стоит предыдущий", []chat.Record{
+			u, {Role: "assistant", Text: "а", StopReason: "end"}, u, {Role: "assistant", Text: "начало", StopReason: "cancelled"}, {Role: chat.RoleRetract}}, true},
 		{"отзыв последнего хода журнала", []chat.Record{
 			u, {Role: "assistant", Text: "а", StopReason: "end"}, u, {Role: "assistant", StopReason: "error"}, {Role: chat.RoleRetract}}, true},
 	}
