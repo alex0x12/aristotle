@@ -60,6 +60,18 @@ go build -o aristotle ./cmd/aristotle
 Запускать из корня репозитория — бинарник ищет рядом `persona/` и `corpus/`;
 из другого места помогает `-root /путь/до/aristotle`.
 
+Чтобы `aristotle` запускался из любого каталога, поставьте его в
+`~/.local/bin`:
+
+```bash
+make install       # другое место — make install PREFIX=/usr/local
+make uninstall     # убрать
+```
+
+Путь к репозиторию вписывается в бинарник при сборке (значение `-root` по
+умолчанию), так что репозиторий должен оставаться на месте; переместили его —
+повторите `make install` и `make index`.
+
 Нужен ключ API провайдера, совместимого с OpenAI. По умолчанию это DeepSeek:
 адрес `https://api.deepseek.com/v1`, модель `deepseek-flash`. Модель одна,
 профилей нет. Ключ сохраняется одной командой; ввод на экране не
@@ -198,9 +210,9 @@ make web            # или ./aristotle web
 Подкоманды: `web` запускает веб-интерфейс (флаги — в разделе о нём), `key`
 сохраняет ключ API (`key -delete` — удаляет).
 
-Цели `make`: `build`, `run`, `web`, `check`, `test`, `eval`, `eval-recall`,
-`corpus`, `corpus-force`, `index`, `recall`, `assets`, `install-skill`,
-`uninstall-skill`, `clean`. Справка — `make help`.
+Цели `make`: `build`, `run`, `web`, `install`, `uninstall`, `check`, `test`,
+`eval`, `eval-recall`, `corpus`, `corpus-force`, `index`, `recall`, `assets`,
+`install-skill`, `uninstall-skill`, `clean`. Справка — `make help`.
 `assets` заново скачивает изображения и шрифт веб-интерфейса; результат и
 так лежит в git, так что нужен он только при смене набора.
 

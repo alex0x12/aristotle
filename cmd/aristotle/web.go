@@ -47,7 +47,7 @@ func runWeb(args []string) int {
 	fs := flag.NewFlagSet("web", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:8337", "адрес: только 127.0.0.1, ::1 или localhost")
 	noOpen := fs.Bool("no-open", false, "не открывать браузер")
-	root := fs.String("root", ".", "корень репозитория (persona/ и corpus/)")
+	root := fs.String("root", defaultRoot, "корень репозитория (persona/ и corpus/)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}

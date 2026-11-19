@@ -26,13 +26,18 @@ const usage = `использование:
   aristotle web [флаги]   веб-интерфейс (aristotle web -h)
   aristotle key           сохранить ключ API (aristotle key -h)
 
-Модель одна: адрес API, название модели и бюджет контекста — в
-~/.config/aristotle/config.json или в «Настройках» веб-интерфейса, ключ — в
-~/.config/aristotle/keys.json (команда aristotle key). Переменные окружения
-для ключа не читаются.
+Модель одна: адрес API, название модели, усилие размышления и бюджет
+контекста — в ~/.config/aristotle/config.json или в «Настройках»
+веб-интерфейса, ключ — в ~/.config/aristotle/keys.json (команда aristotle key).
+Переменные окружения для ключа не читаются.
 
 флаги беседы:
 `
+
+// defaultRoot — значение -root по умолчанию. make install вписывает сюда
+// абсолютный путь к репозиторию (-ldflags -X), и установленный бинарник
+// находит persona/ и corpus/ из любого каталога.
+var defaultRoot = "."
 
 func main() {
 	if len(os.Args) > 1 {
@@ -47,7 +52,7 @@ func main() {
 		fmt.Fprint(flag.CommandLine.Output(), usage)
 		flag.PrintDefaults()
 	}
-	root := flag.String("root", ".", "корень репозитория (persona/ и corpus/)")
+	root := flag.String("root", defaultRoot, "корень репозитория (persona/ и corpus/)")
 	resume := flag.String("resume", "", "продолжить беседу из файла истории")
 	evalPath := flag.String("eval", "", "прогнать вопросы из файла и выйти")
 	recallOnly := flag.Bool("recall-only", false,

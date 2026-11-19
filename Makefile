@@ -5,6 +5,7 @@
 
 BINARY  := aristotle
 CMD     := ./cmd/aristotle
+PREFIX  ?= $(HOME)/.local
 PY      := build/venv/bin/python
 QUESTIONS := eval/questions.yaml
 
@@ -24,7 +25,7 @@ else
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help build run web test test-go test-py check fmt vet eval eval-recall \
+.PHONY: help build run web install uninstall test test-go test-py check fmt vet eval eval-recall \
         corpus corpus-force index recall assets install-skill uninstall-skill clean
 
 help: ## Показать эту справку
@@ -46,6 +47,18 @@ run: build ## Собрать и начать беседу
 
 web: build ## Веб-интерфейс на 127.0.0.1:8337
 	./$(BINARY) web
+
+# Бинарнику нужны persona/ и corpus/ этого репозитория: install вписывает в
+# него путь сюда (значение -root по умолчанию), и `aristotle` работает из любого
+# каталога. Переместили репозиторий — повторите make install (и make index).
+
+install: ## Поставить aristotle в ~/.local/bin (другое место — PREFIX=…)
+	@mkdir -p "$(PREFIX)/bin"
+	go build -ldflags "-X 'main.defaultRoot=$(CURDIR)'" -o "$(PREFIX)/bin/$(BINARY)" $(CMD)
+	@echo "установлен: $(PREFIX)/bin/$(BINARY) (репозиторий: $(CURDIR))"
+
+uninstall: ## Убрать установленный aristotle
+	rm -f "$(PREFIX)/bin/$(BINARY)"
 
 # --- проверки ----------------------------------------------------------------
 
