@@ -1,7 +1,7 @@
 // Package config — настройки подключения к модели: один OpenAI-совместимый
-// адрес, одна модель и бюджет контекста. Профилей нет: Claude и другие модели
-// доступны через любой OpenAI-совместимый шлюз (например, OpenRouter), а ключ
-// лежит отдельно, в keys.json (пакет keys).
+// адрес, одна модель, усилие размышления и бюджет контекста. Профилей нет:
+// Claude и другие модели доступны через любой OpenAI-совместимый шлюз
+// (например, OpenRouter), а ключ лежит отдельно, в keys.json (пакет keys).
 package config
 
 import (
@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -26,7 +27,14 @@ const (
 	DefaultModel         = "deepseek-flash"
 	DefaultContextBudget = 128000
 	DefaultCorpusK       = 6
+
+	DefaultReasoningEffort = "high"
 )
+
+// ReasoningEfforts — допустимые усилия размышления. DeepSeek различает ровно
+// три (minimal сводит к low, medium и xhigh — к high); max думает около минуты
+// на каждый запрос, а их в ходе до пяти.
+var ReasoningEfforts = []string{"low", "high", "max"}
 
 // Пределы значений. Верхние нужны не как мнение о «разумном», а чтобы опечатка
 // (лишний нуль) не стала настройкой.
@@ -41,13 +49,16 @@ const (
 type Config struct {
 	BaseURL string `json:"base_url"`
 	Model   string `json:"model"`
+	// ReasoningEffort — усилие режима размышления, одно из ReasoningEfforts.
+	ReasoningEffort string `json:"reasoning_effort"`
 	// ContextBudget — потолок входа запроса в токенах; 0 — без урезания.
 	ContextBudget int `json:"context_budget"`
 }
 
 // Default — конфиг без файла.
 func Default() Config {
-	return Config{BaseURL: DefaultBaseURL, Model: DefaultModel, ContextBudget: DefaultContextBudget}
+	return Config{BaseURL: DefaultBaseURL, Model: DefaultModel,
+		ReasoningEffort: DefaultReasoningEffort, ContextBudget: DefaultContextBudget}
 }
 
 // Normalized — конфиг с обрезанными пробелами по краям адреса и модели: след
@@ -78,6 +89,9 @@ func (c Config) Validate() error {
 	if model == "" || utf8.RuneCountInString(model) > maxModelRunes ||
 		strings.ContainsFunc(model, unicode.IsControl) {
 		return fieldErr("model", "название модели обязательно, без управляющих знаков, до %d знаков", maxModelRunes)
+	}
+	if !slices.Contains(ReasoningEfforts, c.ReasoningEffort) {
+		return fieldErr("reasoning_effort", "одно из: %s", strings.Join(ReasoningEfforts, ", "))
 	}
 	return ValidateBaseURL(c.BaseURL)
 }

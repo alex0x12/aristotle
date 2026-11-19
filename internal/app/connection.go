@@ -15,12 +15,13 @@ import (
 var ErrNoKey = errors.New("ключ API не задан: откройте «Настройки» в веб-интерфейсе или выполните `aristotle key`")
 
 // Connection — всё, что нужно для обращения к модели: один OpenAI-совместимый
-// адрес, модель, ключ и бюджет контекста. Профилей нет.
+// адрес, модель, ключ, усилие размышления и бюджет контекста. Профилей нет.
 type Connection struct {
-	BaseURL       string
-	Model         string
-	Key           string
-	ContextBudget int // токенов на вход запроса; 0 — без урезания
+	BaseURL         string
+	Model           string
+	Key             string
+	ReasoningEffort string // одно из config.ReasoningEfforts
+	ContextBudget   int    // токенов на вход запроса; 0 — без урезания
 }
 
 // LoadConnection собирает подключение из config.json и keys.json.
@@ -34,7 +35,8 @@ type Connection struct {
 //     NewProvider (ErrNoKey).
 func LoadConnection(paths Paths) (conn Connection, cfgErr error, err error) {
 	cfg, cfgErr := config.Load(paths.Config)
-	conn = Connection{BaseURL: cfg.BaseURL, Model: cfg.Model, ContextBudget: cfg.ContextBudget}
+	conn = Connection{BaseURL: cfg.BaseURL, Model: cfg.Model,
+		ReasoningEffort: cfg.ReasoningEffort, ContextBudget: cfg.ContextBudget}
 	key, err := keys.Store{Path: paths.Keys}.Get()
 	if err != nil {
 		return conn, cfgErr, err
@@ -44,7 +46,7 @@ func LoadConnection(paths Paths) (conn Connection, cfgErr error, err error) {
 }
 
 // NewProvider создаёт провайдера. Без ключа — ErrNoKey, до всякой работы.
-// Адрес и модель проверяются так же, как при сохранении настроек.
+// Настройки проверяются так же, как при сохранении настроек.
 func NewProvider(c Connection) (provider.Provider, error) {
 	if c.Key == "" {
 		return nil, ErrNoKey
@@ -52,8 +54,9 @@ func NewProvider(c Connection) (provider.Provider, error) {
 	if _, err := keys.Normalize(c.Key); err != nil {
 		return nil, errors.New("ключ API недопустим") // сам ключ в тексте не повторяется
 	}
-	if err := (config.Config{BaseURL: c.BaseURL, Model: c.Model, ContextBudget: c.ContextBudget}).Validate(); err != nil {
+	if err := (config.Config{BaseURL: c.BaseURL, Model: c.Model,
+		ReasoningEffort: c.ReasoningEffort, ContextBudget: c.ContextBudget}).Validate(); err != nil {
 		return nil, fmt.Errorf("настройки: %w", err)
 	}
-	return openaicompat.New(c.BaseURL, c.Model, c.Key), nil
+	return openaicompat.New(c.BaseURL, c.Model, c.Key, c.ReasoningEffort), nil
 }

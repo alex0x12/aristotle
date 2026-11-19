@@ -19,12 +19,14 @@ import (
 )
 
 // settingsDoc — документ настроек в ответах GET и PUT: адрес API, модель,
-// бюджет контекста и состояние ключа. Больше в настройках нет ничего.
+// усилие размышления, бюджет контекста и состояние ключа. Больше в настройках
+// нет ничего.
 type settingsDoc struct {
-	BaseURL       string  `json:"base_url"`
-	Model         string  `json:"model"`
-	ContextBudget int     `json:"context_budget"`
-	Key           keyView `json:"key"`
+	BaseURL         string  `json:"base_url"`
+	Model           string  `json:"model"`
+	ReasoningEffort string  `json:"reasoning_effort"`
+	ContextBudget   int     `json:"context_budget"`
+	Key             keyView `json:"key"`
 	// Degraded, Warning и Backup — только в ответе: config.json не читался
 	// (испорчен или остался старого формата), и вместо него взяты умолчания;
 	// предупреждение для экрана; имя копии испорченного файла.
@@ -33,17 +35,18 @@ type settingsDoc struct {
 	Backup   string `json:"backup,omitempty"`
 }
 
-// settingsIn — тело PUT /api/settings: ровно три поля, все обязательные.
+// settingsIn — тело PUT /api/settings: ровно четыре поля, все обязательные.
 // Указатели нужны, чтобы пропущенное поле не превратилось молча в ноль: нулевой
 // бюджет значит «без урезания».
 type settingsIn struct {
-	BaseURL       *string `json:"base_url"`
-	Model         *string `json:"model"`
-	ContextBudget *int    `json:"context_budget"`
+	BaseURL         *string `json:"base_url"`
+	Model           *string `json:"model"`
+	ReasoningEffort *string `json:"reasoning_effort"`
+	ContextBudget   *int    `json:"context_budget"`
 }
 
 // Пределы тел запросов. Ключ — до 4096 знаков (до 16 КиБ в UTF-8), настройки
-// — три коротких поля.
+// — четыре коротких поля.
 const (
 	maxSettingsBody = 16 << 10
 	maxKeyBody      = 64 << 10
@@ -93,7 +96,8 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, v any, limit int64, na
 // умолчания с пометкой degraded и предупреждением.
 func (s *Server) currentSettings() settingsDoc {
 	cfg, degraded := s.loadConfig()
-	doc := settingsDoc{BaseURL: cfg.BaseURL, Model: cfg.Model, ContextBudget: cfg.ContextBudget, Key: s.keyState()}
+	doc := settingsDoc{BaseURL: cfg.BaseURL, Model: cfg.Model, ReasoningEffort: cfg.ReasoningEffort,
+		ContextBudget: cfg.ContextBudget, Key: s.keyState()}
 	if degraded {
 		doc.Degraded, doc.Warning = true, configUnreadableText
 	}
@@ -111,10 +115,13 @@ func settingsOf(in settingsIn) (config.Config, error) {
 		return config.Config{}, errors.New("поле base_url обязательно")
 	case in.Model == nil:
 		return config.Config{}, errors.New("поле model обязательно")
+	case in.ReasoningEffort == nil:
+		return config.Config{}, errors.New("поле reasoning_effort обязательно")
 	case in.ContextBudget == nil:
 		return config.Config{}, errors.New("поле context_budget обязательно")
 	}
-	cfg := config.Config{BaseURL: *in.BaseURL, Model: *in.Model, ContextBudget: *in.ContextBudget}.Normalized()
+	cfg := config.Config{BaseURL: *in.BaseURL, Model: *in.Model, ReasoningEffort: *in.ReasoningEffort,
+		ContextBudget: *in.ContextBudget}.Normalized()
 	return cfg, cfg.Validate()
 }
 

@@ -1,7 +1,8 @@
 import { get, send, esc, fmtTokens } from './api.js';
 
 // Одна модель и один ключ (решение автора). Экран — две вкладки: «Настройки»
-// (адрес API, модель, бюджет контекста и отдельным блоком ключ) и «Расход».
+// (адрес API, модель, усилие размышления, бюджет контекста и отдельным блоком
+// ключ) и «Расход».
 // Ничего больше в настройках нет: ни профилей, ни цен, ни «рассуждающей модели».
 
 const reason = e => (e instanceof TypeError ? 'нет связи с сервером' : e.message);
@@ -26,6 +27,14 @@ const FORM = `
       <label for="f-model">Модель</label>
       <div class="field"><input id="f-model" type="text" autocomplete="off" spellcheck="false" placeholder="deepseek-flash">
         <p class="hint">Название модели у этого провайдера, например deepseek-flash.</p></div>
+      <label for="f-effort">Усилие размышления</label>
+      <div class="field"><select id="f-effort">
+          <option value="low">low</option>
+          <option value="high">high</option>
+          <option value="max">max</option>
+        </select>
+        <p class="hint">Сколько модель думает перед каждым шагом ответа; по умолчанию high.
+          С max она думает около минуты на каждый запрос, а за ход их бывает до пяти — ответ ждётся несколько минут.</p></div>
       <label for="f-budget">Бюджет контекста</label>
       <div class="field"><div class="stepper"><input id="f-budget" type="number" min="0" step="1" autocomplete="off" placeholder="128000">
           <button class="btn ghost" id="b-dec" type="button" aria-label="Меньше на 8000" title="Меньше на 8000">–</button>
@@ -73,7 +82,7 @@ async function settingsTab(box, app) {
   }
   p.innerHTML = FORM;
   const $ = s => p.querySelector(s);
-  const f = { base: $('#f-base'), model: $('#f-model'), budget: $('#f-budget') };
+  const f = { base: $('#f-base'), model: $('#f-model'), effort: $('#f-effort'), budget: $('#f-budget') };
   const els = {
     err: $('#err'), status: $('#status'), backup: $('#backup'),
     keyStatus: $('#key-status'), key: $('#key-input'), note: $('#key-note'),
@@ -84,6 +93,7 @@ async function settingsTab(box, app) {
   const fill = d => {
     f.base.value = d?.base_url ?? '';
     f.model.value = d?.model ?? '';
+    f.effort.value = d?.reasoning_effort ?? 'high';
     f.budget.value = String(d?.context_budget ?? 0);
   };
   fill(doc);
@@ -109,6 +119,7 @@ async function settingsTab(box, app) {
     try { await app.refreshState(); } catch { /* уже сохранено; шапка обновится при следующем обращении */ }
   };
 
+  f.effort.addEventListener('change', () => { if (!busy) els.status.textContent = 'есть несохранённые изменения'; });
   for (const i of [f.base, f.model, f.budget]) {
     i.addEventListener('input', () => { if (!busy) els.status.textContent = 'есть несохранённые изменения'; });
     i.addEventListener('keydown', e => {
@@ -139,7 +150,7 @@ async function settingsTab(box, app) {
 
   const fail = text => { els.err.hidden = false; els.err.textContent = text; };
 
-  // «Сохранить»: на сервер уходят ровно три поля. Ответ сервера — то, что записано
+  // «Сохранить»: на сервер уходят ровно четыре поля. Ответ сервера — то, что записано
   // (адрес и модель обрезаны по краям), его и показываем.
   $('#save').addEventListener('click', () => run(async () => {
     els.err.hidden = true;
@@ -154,7 +165,7 @@ async function settingsTab(box, app) {
     let saved;
     try {
       saved = await send('PUT', '/api/settings',
-        { base_url: f.base.value, model: f.model.value, context_budget: Number(raw) });
+        { base_url: f.base.value, model: f.model.value, reasoning_effort: f.effort.value, context_budget: Number(raw) });
     } catch (e) {
       fail(reason(e)); // текст сервера как есть, поля остаются как набраны
       return;

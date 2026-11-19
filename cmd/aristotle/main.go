@@ -106,6 +106,10 @@ func main() {
 		OnSearchStart: func(query, group string) {
 			fmt.Fprintf(os.Stderr, "[ищу в корпусе: %s]\n", query)
 		},
+		// В режиме размышления до первого слова проходит до минуты.
+		OnModelStart: func() {
+			fmt.Fprintln(os.Stderr, "[размышляю]")
+		},
 		OnNotice: func(text string) {
 			fmt.Fprintln(os.Stderr, "предупреждение:", text)
 		},

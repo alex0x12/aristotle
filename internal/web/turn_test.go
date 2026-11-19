@@ -101,6 +101,9 @@ func TestTurnStreamsBlocksAndJournals(t *testing.T) {
 			continue
 		}
 		names = append(names, ev.Name)
+		if ev.Name == "thinking" && len(ev.Data) != 0 {
+			t.Fatalf("thinking несёт данные: %v", ev.Data)
+		}
 		if ev.Name == "block" && ev.Data["kind"] == "quote" {
 			quotes = append(quotes, ev.Data)
 		}
@@ -108,7 +111,8 @@ func TestTurnStreamsBlocksAndJournals(t *testing.T) {
 			usage = ev.Data["usage"].(map[string]any)
 		}
 	}
-	want := "search block block block block usage done"
+	// thinking — перед каждым запросом к модели: до поиска и после него.
+	want := "thinking search thinking block block block block usage done"
 	if strings.Join(names, " ") != want {
 		t.Fatalf("события %v, ожидалось %s", names, want)
 	}
@@ -244,7 +248,7 @@ func TestOverBudgetWarnsButStillAnswers(t *testing.T) {
 	if len(warnings) != 1 || warnings[0] != "бюджет превышен и после урезания" {
 		t.Fatalf("предупреждения %q", warnings)
 	}
-	if got := strings.Join(names, " "); got != "block warning usage done" {
+	if got := strings.Join(names, " "); got != "thinking block warning usage done" {
 		t.Fatalf("события %q: запрос должен уйти и получить ответ, а не быть заблокирован", got)
 	}
 }
@@ -267,7 +271,7 @@ func TestFailedTurnJournalsAndStreamsUsageAsUnknown(t *testing.T) {
 			usageEv = ev.Data
 		}
 	}
-	if got := strings.Join(names, " "); got != "search usage error" {
+	if got := strings.Join(names, " "); got != "thinking search thinking usage error" {
 		t.Fatalf("события %q", got)
 	}
 	u := usageEv["usage"].(map[string]any)

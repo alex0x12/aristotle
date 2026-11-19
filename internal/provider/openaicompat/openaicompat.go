@@ -65,11 +65,11 @@ func (a *accumulator) Calls() []provider.ToolCall {
 }
 
 // buildBody — тело запроса. Потолка вывода и температуры в нём нет: настраиваемы
-// только адрес, модель и ключ. thinking — режим размышления с наибольшим
-// усилием (параметры названы в документации DeepSeek: верхнего уровня
-// thinking.type и reasoning_effort); без него не уходят и рассуждения прежних
+// только адрес, модель, ключ и усилие. thinking — режим размышления с усилием
+// effort (параметры названы в документации DeepSeek: верхнего уровня
+// thinking.type и reasoning_effort). Без режима не уходят и рассуждения прежних
 // ответов — сервер, не знающий этого режима, их тоже не поймёт.
-func buildBody(model string, req provider.Request, thinking bool) map[string]any {
+func buildBody(model, effort string, req provider.Request, thinking bool) map[string]any {
 	msgs := make([]map[string]any, 0, len(req.Messages)+1)
 	if req.System != "" {
 		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
@@ -112,7 +112,7 @@ func buildBody(model string, req provider.Request, thinking bool) map[string]any
 	}
 	if thinking {
 		body["thinking"] = map[string]any{"type": "enabled"}
-		body["reasoning_effort"] = "max"
+		body["reasoning_effort"] = effort
 	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))
@@ -134,17 +134,19 @@ type client struct {
 	baseURL string
 	key     string
 	model   string
+	effort  string
 	http    *http.Client
 }
 
-// New — провайдер для OpenAI-совместимого адреса. Адрес и модель проверены
-// вызывающим (config.Validate), ключ — тоже (keys.Normalize): здесь они
-// только используются.
-func New(baseURL, model, key string) provider.Provider {
+// New — провайдер для OpenAI-совместимого адреса. Адрес, модель и усилие
+// проверены вызывающим (config.Validate), ключ — тоже (keys.Normalize): здесь
+// они только используются.
+func New(baseURL, model, key, effort string) provider.Provider {
 	return &client{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
 		key:     key,
 		model:   model,
+		effort:  effort,
 		http:    &http.Client{},
 	}
 }
@@ -171,7 +173,7 @@ func rejectsThinking(status int, text string) bool {
 func (c *client) rejectKey() string { return c.baseURL + "\x00" + c.model }
 
 func (c *client) post(ctx context.Context, req provider.Request, thinking bool) (*http.Response, error) {
-	payload, err := json.Marshal(buildBody(c.model, req, thinking))
+	payload, err := json.Marshal(buildBody(c.model, c.effort, req, thinking))
 	if err != nil {
 		return nil, err
 	}

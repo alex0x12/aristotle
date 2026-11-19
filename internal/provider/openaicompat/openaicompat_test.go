@@ -49,11 +49,11 @@ func TestAccumulatorSkipsBrokenJSON(t *testing.T) {
 	}
 }
 
-// Настраиваемы только адрес, модель и ключ: потолка вывода, температуры и
-// top_p в запросе нет; режим размышления включён всегда, усилие — наибольшее
-// (параметры верхнего уровня, как в документации DeepSeek).
-func TestBodyThinkingMaxAndNoTuningKnobs(t *testing.T) {
-	body := buildBody("deepseek-flash", provider.Request{
+// Настраиваемы только адрес, модель, ключ и усилие: потолка вывода, температуры
+// и top_p в запросе нет; режим размышления включён всегда, усилие — из
+// настроек (параметры верхнего уровня, как в документации DeepSeek).
+func TestBodyThinkingEffortAndNoTuningKnobs(t *testing.T) {
+	body := buildBody("deepseek-flash", "max", provider.Request{
 		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
 	}, true)
 	for _, key := range []string{"max_tokens", "max_completion_tokens", "temperature", "top_p"} {
@@ -69,7 +69,7 @@ func TestBodyThinkingMaxAndNoTuningKnobs(t *testing.T) {
 		t.Fatalf("тело: %+v", body)
 	}
 	// Без режима (сервер отказался) параметров нет вовсе.
-	plain := buildBody("m", provider.Request{}, false)
+	plain := buildBody("m", "high", provider.Request{}, false)
 	if _, ok := plain["thinking"]; ok {
 		t.Error("thinking остался в запросе без режима")
 	}
@@ -93,7 +93,7 @@ func TestBodyReasoningRoundTripAndLegacy(t *testing.T) {
 		{Role: provider.RoleUser, ToolResults: []provider.ToolResult{{ID: "c1", Content: "глава"}}},
 		{Role: provider.RoleAssistant, Text: "ответ", Reasoning: "итог размышлений"},
 	}}
-	msgs := buildBody("m", req, true)["messages"].([]map[string]any)
+	msgs := buildBody("m", "high", req, true)["messages"].([]map[string]any)
 	var assistants []map[string]any
 	for _, m := range msgs {
 		if m["role"] == "assistant" {
@@ -112,7 +112,7 @@ func TestBodyReasoningRoundTripAndLegacy(t *testing.T) {
 	if assistants[2]["reasoning_content"] != "итог размышлений" || assistants[2]["content"] != "ответ" {
 		t.Errorf("итоговый ответ: %+v", assistants[2])
 	}
-	for _, m := range buildBody("m", req, false)["messages"].([]map[string]any) {
+	for _, m := range buildBody("m", "high", req, false)["messages"].([]map[string]any) {
 		if _, has := m["reasoning_content"]; has {
 			t.Fatalf("рассуждение осталось в запросе без режима: %+v", m)
 		}
@@ -120,7 +120,7 @@ func TestBodyReasoningRoundTripAndLegacy(t *testing.T) {
 }
 
 func TestSystemGoesFirstAsMessage(t *testing.T) {
-	body := buildBody("gpt-5.1", provider.Request{
+	body := buildBody("gpt-5.1", "high", provider.Request{
 		System:   "ты Аристотель",
 		Messages: []provider.Message{{Role: provider.RoleUser, Text: "привет"}},
 	}, true)
@@ -189,7 +189,7 @@ func TestUsageMissingIsUnknown(t *testing.T) {
 }
 
 func TestBodyAsksForUsage(t *testing.T) {
-	body := buildBody("deepseek-v4-pro", provider.Request{
+	body := buildBody("deepseek-v4-pro", "high", provider.Request{
 		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
 	}, true)
 	opts, ok := body["stream_options"].(map[string]any)
@@ -224,7 +224,7 @@ func serve(t *testing.T, status int, body string) (url string, got func() (*http
 func TestStreamSendsConfiguredModelKeyAndAddress(t *testing.T) {
 	url, got := serve(t, 200, deepseekStream)
 	// Хвостовой слэш адреса не должен давать «//chat/completions».
-	p := New(url+"/", "my-model", "FAKE-KEY-0000")
+	p := New(url+"/", "my-model", "FAKE-KEY-0000", "high")
 	st, err := p.Stream(context.Background(), provider.Request{
 		System:   "ты Аристотель",
 		Messages: []provider.Message{{Role: provider.RoleUser, Text: "привет"}},
@@ -269,7 +269,7 @@ func TestStreamSendsConfiguredModelKeyAndAddress(t *testing.T) {
 			t.Errorf("в запросе есть %q", key)
 		}
 	}
-	if sent["reasoning_effort"] != "max" {
+	if sent["reasoning_effort"] != "high" {
 		t.Errorf("reasoning_effort = %v", sent["reasoning_effort"])
 	}
 }
@@ -278,7 +278,7 @@ func TestStreamSendsConfiguredModelKeyAndAddress(t *testing.T) {
 // провайдеры повторяют присланный ключ в тексте ошибки.
 func TestStreamErrorDoesNotRepeatKey(t *testing.T) {
 	url, _ := serve(t, 401, `{"error":"Incorrect API key provided: FAKE-KEY-0000 is invalid"}`)
-	_, err := New(url, "m", "FAKE-KEY-0000").Stream(context.Background(), provider.Request{
+	_, err := New(url, "m", "FAKE-KEY-0000", "high").Stream(context.Background(), provider.Request{
 		Messages: []provider.Message{{Role: provider.RoleUser, Text: "х"}},
 	})
 	if err == nil {
@@ -439,13 +439,13 @@ func TestThinkingRejectedRetriesOnceAndRemembers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(f.handler))
 	defer srv.Close()
 
-	c := New(srv.URL, "m1", "ключ")
+	c := New(srv.URL, "m1", "ключ", "high")
 	evs := collect(t, c, reqWithHistory)
 	if f.count() != 2 {
 		t.Fatalf("запросов %d, ожидалось 2 (отказ и повтор)", f.count())
 	}
 	first, second := f.bodies[0], f.bodies[1]
-	if first["thinking"] == nil || first["reasoning_effort"] != "max" {
+	if first["thinking"] == nil || first["reasoning_effort"] != "high" {
 		t.Errorf("первый запрос без параметров: %+v", first)
 	}
 	if _, has := second["thinking"]; has {
@@ -483,7 +483,7 @@ func TestThinkingRejectedRetriesOnceAndRemembers(t *testing.T) {
 	// Другая модель — другой ключ памяти: параметры пробуются снова.
 	f.script = f.script[:0]
 	f.add(200, okSSE)
-	collect(t, New(srv.URL, "m2", "ключ"), reqWithHistory)
+	collect(t, New(srv.URL, "m2", "ключ", "high"), reqWithHistory)
 	if f.bodies[f.count()-1]["thinking"] == nil {
 		t.Error("для новой модели параметры не отправлены")
 	}
@@ -498,7 +498,7 @@ func TestRejectionAboutReasoningContentDoesNotRetry(t *testing.T) {
 	f.add(400, `{"error":{"message":"Missing reasoning_content for an assistant message."}}`)
 	srv := httptest.NewServer(http.HandlerFunc(f.handler))
 	defer srv.Close()
-	if _, err := New(srv.URL, "m", "к").Stream(context.Background(), reqWithHistory); err == nil {
+	if _, err := New(srv.URL, "m", "к", "high").Stream(context.Background(), reqWithHistory); err == nil {
 		t.Fatal("ожидалась ошибка")
 	}
 	if f.count() != 1 {
@@ -514,7 +514,7 @@ func TestSecondRejectionIsAnErrorNoLoop(t *testing.T) {
 	f.add(401, `{"error":{"message":"неверный ключ"}}`)
 	srv := httptest.NewServer(http.HandlerFunc(f.handler))
 	defer srv.Close()
-	_, err := New(srv.URL, "m", "к").Stream(context.Background(), reqWithHistory)
+	_, err := New(srv.URL, "m", "к", "high").Stream(context.Background(), reqWithHistory)
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("ошибка повтора: %v", err)
 	}

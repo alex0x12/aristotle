@@ -18,11 +18,12 @@ func writeCfg(t *testing.T, body string) string {
 
 func TestDefaults(t *testing.T) {
 	d := Default()
-	want := Config{BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-flash", ContextBudget: 128000}
+	want := Config{BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-flash", ReasoningEffort: "high", ContextBudget: 128000}
 	if d != want {
 		t.Fatalf("Default() = %+v, ожидалось %+v", d, want)
 	}
-	if DefaultBaseURL != want.BaseURL || DefaultModel != want.Model || DefaultContextBudget != 128000 || DefaultCorpusK != 6 {
+	if DefaultBaseURL != want.BaseURL || DefaultModel != want.Model || DefaultContextBudget != 128000 || DefaultCorpusK != 6 ||
+		DefaultReasoningEffort != want.ReasoningEffort {
 		t.Fatal("константы умолчаний разошлись с Default()")
 	}
 	if err := d.Validate(); err != nil {
@@ -38,7 +39,8 @@ func TestLoadMissingFileGivesDefaults(t *testing.T) {
 }
 
 // Файл накладывается ПОВЕРХ умолчаний: опущенное поле остаётся умолчанием, а
-// явный ноль бюджета («без урезания») — нулём.
+// явный ноль бюджета («без урезания») — нулём. Файлы, записанные до появления
+// усилия, получают умолчание high.
 func TestLoadOverlaysDefaults(t *testing.T) {
 	cases := []struct {
 		name, body string
@@ -46,15 +48,17 @@ func TestLoadOverlaysDefaults(t *testing.T) {
 	}{
 		{"пустой объект", `{}`, Default()},
 		{"только модель", `{"model":"deepseek-v4-pro"}`,
-			Config{BaseURL: DefaultBaseURL, Model: "deepseek-v4-pro", ContextBudget: DefaultContextBudget}},
+			Config{BaseURL: DefaultBaseURL, Model: "deepseek-v4-pro", ReasoningEffort: DefaultReasoningEffort, ContextBudget: DefaultContextBudget}},
 		{"только адрес", `{"base_url":"https://openrouter.ai/api/v1"}`,
-			Config{BaseURL: "https://openrouter.ai/api/v1", Model: DefaultModel, ContextBudget: DefaultContextBudget}},
+			Config{BaseURL: "https://openrouter.ai/api/v1", Model: DefaultModel, ReasoningEffort: DefaultReasoningEffort, ContextBudget: DefaultContextBudget}},
 		{"явный ноль бюджета", `{"context_budget":0}`,
-			Config{BaseURL: DefaultBaseURL, Model: DefaultModel, ContextBudget: 0}},
-		{"всё", `{"base_url":"http://localhost:11434/v1","model":"qwen3.5:4b","context_budget":32000}`,
-			Config{BaseURL: "http://localhost:11434/v1", Model: "qwen3.5:4b", ContextBudget: 32000}},
+			Config{BaseURL: DefaultBaseURL, Model: DefaultModel, ReasoningEffort: DefaultReasoningEffort, ContextBudget: 0}},
+		{"только усилие", `{"reasoning_effort":"max"}`,
+			Config{BaseURL: DefaultBaseURL, Model: DefaultModel, ReasoningEffort: "max", ContextBudget: DefaultContextBudget}},
+		{"всё", `{"base_url":"http://localhost:11434/v1","model":"qwen3.5:4b","reasoning_effort":"low","context_budget":32000}`,
+			Config{BaseURL: "http://localhost:11434/v1", Model: "qwen3.5:4b", ReasoningEffort: "low", ContextBudget: 32000}},
 		{"пробелы вокруг модели срезаются", `{"model":"  m1  "}`,
-			Config{BaseURL: DefaultBaseURL, Model: "m1", ContextBudget: DefaultContextBudget}},
+			Config{BaseURL: DefaultBaseURL, Model: "m1", ReasoningEffort: DefaultReasoningEffort, ContextBudget: DefaultContextBudget}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,6 +123,8 @@ func TestLoadValidatesValues(t *testing.T) {
 		"пустой адрес":   `{"base_url":""}`,
 		"без хоста":      `{"base_url":"https:///v1"}`,
 		"логин в адресе": `{"base_url":"https://user:pw@api.example.com/v1"}`,
+		"усилие medium":  `{"reasoning_effort":"medium"}`,
+		"усилие пустое":  `{"reasoning_effort":""}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load(writeCfg(t, body)); err == nil {
@@ -141,6 +147,11 @@ func TestValidate(t *testing.T) {
 		{"бюджет верхний предел", func(c *Config) { c.ContextBudget = 10_000_000 }, ""},
 		{"бюджет выше предела", func(c *Config) { c.ContextBudget = 10_000_001 }, "context_budget"},
 		{"бюджет отрицательный", func(c *Config) { c.ContextBudget = -1 }, "context_budget"},
+		{"усилие low", func(c *Config) { c.ReasoningEffort = "low" }, ""},
+		{"усилие max", func(c *Config) { c.ReasoningEffort = "max" }, ""},
+		{"усилие пустое", func(c *Config) { c.ReasoningEffort = "" }, "reasoning_effort"},
+		{"усилие medium", func(c *Config) { c.ReasoningEffort = "medium" }, "reasoning_effort"},
+		{"усилие заглавными", func(c *Config) { c.ReasoningEffort = "MAX" }, "reasoning_effort"},
 		{"модель пустая", func(c *Config) { c.Model = "" }, "model"},
 		{"модель из пробелов", func(c *Config) { c.Model = "   " }, "model"},
 		{"модель 200 знаков", func(c *Config) { c.Model = long(200) }, ""},
@@ -203,8 +214,8 @@ func TestValidateErrorDoesNotEchoValue(t *testing.T) {
 func TestSaveLoadRoundTrip(t *testing.T) {
 	for _, c := range []Config{
 		Default(),
-		{BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-opus-5", ContextBudget: 0},
-		{BaseURL: "http://localhost:11434/v1", Model: "qwen3.5:4b", ContextBudget: 10_000_000},
+		{BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-opus-5", ReasoningEffort: "max", ContextBudget: 0},
+		{BaseURL: "http://localhost:11434/v1", Model: "qwen3.5:4b", ReasoningEffort: "low", ContextBudget: 10_000_000},
 	} {
 		path := filepath.Join(t.TempDir(), "sub", "config.json")
 		if err := Save(path, c); err != nil {

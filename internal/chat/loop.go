@@ -51,6 +51,11 @@ type Session struct {
 	// какого-либо признака работы это неотличимо от зависания.
 	OnSearchStart func(query, group string)
 
+	// OnModelStart — необязательный колбэк, вызываемый перед каждым запросом
+	// к модели. В режиме размышления до первого слова проходит до минуты, и
+	// без признака работы это тоже неотличимо от зависания.
+	OnModelStart func()
+
 	// OnNotice — необязательный колбэк для разовых предупреждений провайдера
 	// (например, что сервер не принял параметры режима размышления): они не
 	// срывают ход, но должны дойти до пользователя.
@@ -182,6 +187,9 @@ func (s *Session) Turn(ctx context.Context, userText string,
 		reqChars := fixed + messagesChars(msgs)
 
 		req := provider.Request{System: s.System, Messages: msgs, Tools: tools}
+		if s.OnModelStart != nil {
+			s.OnModelStart()
+		}
 		stream, err := s.Provider.Stream(ctx, req)
 		if err != nil {
 			s.Messages = s.Messages[:baseLen]

@@ -65,7 +65,8 @@ func (s *Server) connection() (app.Connection, error) {
 	if key == "" {
 		return app.Connection{}, errNoKey
 	}
-	return app.Connection{BaseURL: cfg.BaseURL, Model: cfg.Model, Key: key, ContextBudget: cfg.ContextBudget}, nil
+	return app.Connection{BaseURL: cfg.BaseURL, Model: cfg.Model, Key: key,
+		ReasoningEffort: cfg.ReasoningEffort, ContextBudget: cfg.ContextBudget}, nil
 }
 
 // session — сессия беседы; при первом обращении восстанавливается из
@@ -186,6 +187,10 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text s
 			journalWarned = true
 			out.send("warning", map[string]string{"text": "журнал беседы не записывается: " + err.Error()})
 		}
+	}
+	// Событие без текста: само рассуждение на экран не идёт.
+	sess.OnModelStart = func() {
+		out.send("thinking", map[string]string{})
 	}
 	sess.OnSearchStart = func(query, group string) {
 		out.send("search", map[string]string{"query": query, "group": group})

@@ -215,6 +215,18 @@ async function ask(v, text, again, prev = null) {
   busy(v, true);
   syncAgain(v);
 
+  // Строка состояния: что идёт сейчас и сколько уже длится ход. Размышление
+  // модели занимает до минуты на запрос, и без счётчика ожидание неотличимо от
+  // зависания. Первое слово ответа строку прячет.
+  const started = Date.now();
+  let phase = '';
+  const showStatus = () => {
+    const s = Math.floor((Date.now() - started) / 1000);
+    v.status.textContent = `${phase} · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  const setPhase = p => { phase = p; v.status.hidden = false; showStatus(); };
+  const clock = setInterval(() => { if (!v.status.hidden) showStatus(); }, 1000);
+
   // Вопрос только что отправлен — смотрим в конец. Дальше за ответом идём, пока
   // читатель сам не отлистал вверх. Флаг меняют только события прокрутки.
   // Уменьшение scrollTop — ещё не уход читателя вверх: его даёт и браузер, когда
@@ -281,7 +293,8 @@ async function ask(v, text, again, prev = null) {
           if (e) ans.insertBefore(e, live);
           break;
         }
-        case 'search': v.status.hidden = false; v.status.textContent = `ищу в корпусе: «${d.query ?? ''}»…`; break;
+        case 'thinking': setPhase('размышляю'); break;
+        case 'search': setPhase(`ищу в корпусе: «${d.query ?? ''}»`); break;
         case 'warning': addBanner(v, d.text ?? ''); break;
         case 'trim': markTrim(v.msgs, d); break;
         // Расход приходит и без done: при ошибке он идёт перед error.
@@ -334,6 +347,7 @@ async function ask(v, text, again, prev = null) {
   } finally {
     v.msgs.removeEventListener('scroll', onScroll);
     if (live.classList.contains('live')) live.remove();
+    clearInterval(clock);
     v.status.hidden = true;
     v.controller = null;
     busy(v, false);

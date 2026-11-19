@@ -33,7 +33,8 @@ func TestLoadConnectionDefaultsWithoutFiles(t *testing.T) {
 	if cfgErr != nil || err != nil {
 		t.Fatalf("cfgErr=%v err=%v", cfgErr, err)
 	}
-	want := Connection{BaseURL: config.DefaultBaseURL, Model: config.DefaultModel, ContextBudget: config.DefaultContextBudget}
+	want := Connection{BaseURL: config.DefaultBaseURL, Model: config.DefaultModel,
+		ReasoningEffort: config.DefaultReasoningEffort, ContextBudget: config.DefaultContextBudget}
 	if conn != want {
 		t.Fatalf("conn = %+v, ожидалось %+v", conn, want)
 	}
@@ -41,7 +42,7 @@ func TestLoadConnectionDefaultsWithoutFiles(t *testing.T) {
 
 func TestLoadConnectionReadsConfigAndKey(t *testing.T) {
 	paths := testPaths(t)
-	if err := config.Save(paths.Config, config.Config{BaseURL: "http://127.0.0.1:1/v1", Model: "m", ContextBudget: 0}); err != nil {
+	if err := config.Save(paths.Config, config.Config{BaseURL: "http://127.0.0.1:1/v1", Model: "m", ReasoningEffort: "max", ContextBudget: 0}); err != nil {
 		t.Fatal(err)
 	}
 	if err := (keys.Store{Path: paths.Keys}).Set("FAKE-KEY-AAAA"); err != nil {
@@ -51,7 +52,7 @@ func TestLoadConnectionReadsConfigAndKey(t *testing.T) {
 	if cfgErr != nil || err != nil {
 		t.Fatalf("cfgErr=%v err=%v", cfgErr, err)
 	}
-	want := Connection{BaseURL: "http://127.0.0.1:1/v1", Model: "m", Key: "FAKE-KEY-AAAA", ContextBudget: 0}
+	want := Connection{BaseURL: "http://127.0.0.1:1/v1", Model: "m", Key: "FAKE-KEY-AAAA", ReasoningEffort: "max", ContextBudget: 0}
 	if conn != want {
 		t.Fatalf("conn = %+v", conn)
 	}
@@ -103,7 +104,7 @@ func TestEnvironmentNeverSuppliesKey(t *testing.T) {
 }
 
 func TestNewProvider(t *testing.T) {
-	ok := Connection{BaseURL: "https://api.example.com/v1", Model: "m", Key: "FAKE-KEY-1234", ContextBudget: 1000}
+	ok := Connection{BaseURL: "https://api.example.com/v1", Model: "m", Key: "FAKE-KEY-1234", ReasoningEffort: "high", ContextBudget: 1000}
 	if p, err := NewProvider(ok); err != nil || p == nil {
 		t.Fatalf("NewProvider: %v, %v", p, err)
 	}
@@ -115,6 +116,7 @@ func TestNewProvider(t *testing.T) {
 		"адрес с паролем":    func(c *Connection) { c.BaseURL = "https://u:p@x/v1" },
 		"модель пустая":      func(c *Connection) { c.Model = "" },
 		"бюджет отрицателен": func(c *Connection) { c.ContextBudget = -5 },
+		"усилие неизвестное": func(c *Connection) { c.ReasoningEffort = "medium" },
 	}
 	for name, mod := range cases {
 		t.Run(name, func(t *testing.T) {

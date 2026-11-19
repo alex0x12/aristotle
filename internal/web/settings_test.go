@@ -70,7 +70,7 @@ func TestSettingsContractWithKey(t *testing.T) {
 	m := jsonOf(t, do(t, h, http.MethodGet, "/api/settings", ""))
 	// Ровно эти поля: ни профилей, ни default, ни corpus_k, ни цен; у здорового
 	// конфига нет degraded, warning и backup.
-	if got := keysOfMap(m); got != "base_url,context_budget,key,model" {
+	if got := keysOfMap(m); got != "base_url,context_budget,key,model,reasoning_effort" {
 		t.Fatalf("поля настроек: %s", got)
 	}
 	if m["base_url"] != "https://api.deepseek.com/v1" || m["model"] != "deepseek-flash" || m["context_budget"] != 128000.0 {
@@ -131,26 +131,28 @@ func TestOldFormatKeysFileMeansNoKeyWithoutWarning(t *testing.T) {
 func TestPutSettingsSavesAndReturnsDocument(t *testing.T) {
 	s := newTestServer(t, nil, nil)
 	h := s.Handler()
-	rec := putSettings(t, h, `{"base_url":"https://openrouter.ai/api/v1","model":"anthropic/claude-opus-5","context_budget":32000}`)
+	rec := putSettings(t, h, `{"base_url":"https://openrouter.ai/api/v1","model":"anthropic/claude-opus-5","context_budget":32000,"reasoning_effort":"max"}`)
 	if rec.Code != 200 {
 		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 	}
 	m := jsonOf(t, rec)
-	if got := keysOfMap(m); got != "base_url,context_budget,key,model" {
+	if got := keysOfMap(m); got != "base_url,context_budget,key,model,reasoning_effort" {
 		t.Fatalf("поля ответа: %s", got)
 	}
-	if m["base_url"] != "https://openrouter.ai/api/v1" || m["model"] != "anthropic/claude-opus-5" || m["context_budget"] != 32000.0 {
+	if m["base_url"] != "https://openrouter.ai/api/v1" || m["model"] != "anthropic/claude-opus-5" ||
+		m["reasoning_effort"] != "max" || m["context_budget"] != 32000.0 {
 		t.Fatalf("ответ: %v", m)
 	}
-	// Файл — три поля, как их пишет config.Save; Load читает обратно то же.
+	// Файл — четыре поля, как их пишет config.Save; Load читает обратно то же.
 	cfg, err := config.Load(s.Paths.Config)
-	if err != nil || cfg != (config.Config{BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-opus-5", ContextBudget: 32000}) {
+	if err != nil || cfg != (config.Config{BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-opus-5",
+		ReasoningEffort: "max", ContextBudget: 32000}) {
 		t.Fatalf("конфиг на диске %+v, %v", cfg, err)
 	}
 	data, _ := os.ReadFile(s.Paths.Config)
 	var onDisk map[string]any
 	json.Unmarshal(data, &onDisk)
-	if keysOfMap(onDisk) != "base_url,context_budget,model" {
+	if keysOfMap(onDisk) != "base_url,context_budget,model,reasoning_effort" {
 		t.Fatalf("поля файла: %s", data)
 	}
 	st, _ := os.Stat(s.Paths.Config)
@@ -169,16 +171,16 @@ func TestPutSettingsTrimsAndAcceptsBoundaries(t *testing.T) {
 		body string
 		want config.Config
 	}{
-		"пробелы срезаются": {`{"base_url":"  http://127.0.0.1:11434/v1 ","model":"  qwen3.5:4b ","context_budget":1000}`,
-			config.Config{BaseURL: "http://127.0.0.1:11434/v1", Model: "qwen3.5:4b", ContextBudget: 1000}},
-		"бюджет 0 — без урезания": {`{"base_url":"https://a.example/v1","model":"m","context_budget":0}`,
-			config.Config{BaseURL: "https://a.example/v1", Model: "m", ContextBudget: 0}},
-		"бюджет на пределе": {`{"base_url":"https://a.example/v1","model":"m","context_budget":10000000}`,
-			config.Config{BaseURL: "https://a.example/v1", Model: "m", ContextBudget: 10_000_000}},
-		"модель 200 знаков": {`{"base_url":"https://a.example/v1","model":"` + long + `","context_budget":1}`,
-			config.Config{BaseURL: "https://a.example/v1", Model: long, ContextBudget: 1}},
-		"адрес 2048 знаков": {`{"base_url":"https://a.example/` + strings.Repeat("a", 2048-len("https://a.example/")) + `","model":"m","context_budget":1}`,
-			config.Config{BaseURL: "https://a.example/" + strings.Repeat("a", 2048-len("https://a.example/")), Model: "m", ContextBudget: 1}},
+		"пробелы срезаются": {`{"base_url":"  http://127.0.0.1:11434/v1 ","model":"  qwen3.5:4b ","context_budget":1000,"reasoning_effort":"high"}`,
+			config.Config{BaseURL: "http://127.0.0.1:11434/v1", Model: "qwen3.5:4b", ReasoningEffort: "high", ContextBudget: 1000}},
+		"бюджет 0 — без урезания": {`{"base_url":"https://a.example/v1","model":"m","context_budget":0,"reasoning_effort":"high"}`,
+			config.Config{BaseURL: "https://a.example/v1", Model: "m", ReasoningEffort: "high", ContextBudget: 0}},
+		"бюджет на пределе": {`{"base_url":"https://a.example/v1","model":"m","context_budget":10000000,"reasoning_effort":"high"}`,
+			config.Config{BaseURL: "https://a.example/v1", Model: "m", ReasoningEffort: "high", ContextBudget: 10_000_000}},
+		"модель 200 знаков": {`{"base_url":"https://a.example/v1","model":"` + long + `","context_budget":1,"reasoning_effort":"high"}`,
+			config.Config{BaseURL: "https://a.example/v1", Model: long, ReasoningEffort: "high", ContextBudget: 1}},
+		"адрес 2048 знаков": {`{"base_url":"https://a.example/` + strings.Repeat("a", 2048-len("https://a.example/")) + `","model":"m","context_budget":1,"reasoning_effort":"high"}`,
+			config.Config{BaseURL: "https://a.example/" + strings.Repeat("a", 2048-len("https://a.example/")), Model: "m", ReasoningEffort: "high", ContextBudget: 1}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newTestServer(t, nil, nil)
@@ -196,7 +198,7 @@ func TestPutSettingsTrimsAndAcceptsBoundaries(t *testing.T) {
 // файла, ни копии на диске.
 func TestPutSettingsValidationTable(t *testing.T) {
 	good := func(over string) string {
-		m := map[string]string{"base_url": `"https://api.example.com/v1"`, "model": `"m"`, "context_budget": `10`}
+		m := map[string]string{"base_url": `"https://api.example.com/v1"`, "model": `"m"`, "reasoning_effort": `"high"`, "context_budget": `10`}
 		for _, kv := range strings.Split(over, ";") {
 			if kv == "" {
 				continue
@@ -245,6 +247,11 @@ func TestPutSettingsValidationTable(t *testing.T) {
 		{"бюджет дробный", good(`context_budget=1.5`), "context_budget"},
 		{"бюджет огромный", good(`context_budget=99999999999999999999`), "context_budget"},
 		{"бюджета нет в теле", good(`context_budget=`), "context_budget"},
+		// reasoning_effort
+		{"усилие medium", good(`reasoning_effort="medium"`), "reasoning_effort"},
+		{"усилие пустое", good(`reasoning_effort=""`), "reasoning_effort"},
+		{"усилие не строка", good(`reasoning_effort=3`), "reasoning_effort"},
+		{"усилия нет в теле", good(`reasoning_effort=`), "reasoning_effort"},
 		// чужие поля: профили и всё, что было настройкой раньше
 		{"profile", `{"base_url":"https://a.example/v1","model":"m","context_budget":1,"profile":"x"}`, "profile"},
 		{"profiles", `{"base_url":"https://a.example/v1","model":"m","context_budget":1,"profiles":[]}`, "profiles"},
@@ -280,7 +287,7 @@ func TestPutSettingsValidationTable(t *testing.T) {
 
 // Тело не JSON, пустое, с лишним после объекта и слишком большое — отказ до диска.
 func TestPutSettingsRejectsBadBodies(t *testing.T) {
-	huge := `{"base_url":"https://a.example/v1","model":"` + strings.Repeat("a", maxSettingsBody) + `","context_budget":1}`
+	huge := `{"base_url":"https://a.example/v1","model":"` + strings.Repeat("a", maxSettingsBody) + `","context_budget":1,"reasoning_effort":"high"}`
 	for name, c := range map[string]struct {
 		body string
 		code int
@@ -288,7 +295,7 @@ func TestPutSettingsRejectsBadBodies(t *testing.T) {
 		"пустое":          {"", 400},
 		"не JSON":         {"{не json", 400},
 		"массив":          {"[]", 400},
-		"лишнее после":    {`{"base_url":"https://a.example/v1","model":"m","context_budget":1} {}`, 400},
+		"лишнее после":    {`{"base_url":"https://a.example/v1","model":"m","context_budget":1,"reasoning_effort":"high"} {}`, 400},
 		"слишком большое": {huge, 413},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -307,9 +314,9 @@ func TestPutSettingsRejectsBadBodies(t *testing.T) {
 // Недопустимое сохранение существующий файл не трогает.
 func TestPutSettingsInvalidKeepsExistingFile(t *testing.T) {
 	s := newTestServer(t, nil, nil)
-	const before = `{"base_url":"https://a.example/v1","model":"keep-me","context_budget":5}`
+	const before = `{"base_url":"https://a.example/v1","model":"keep-me","context_budget":5,"reasoning_effort":"high"}`
 	writeConfig(t, s, before)
-	if rec := putSettings(t, s.Handler(), `{"base_url":"ftp://x","model":"m","context_budget":1}`); rec.Code != 400 {
+	if rec := putSettings(t, s.Handler(), `{"base_url":"ftp://x","model":"m","context_budget":1,"reasoning_effort":"high"}`); rec.Code != 400 {
 		t.Fatalf("код %d", rec.Code)
 	}
 	if data, _ := os.ReadFile(s.Paths.Config); string(data) != before {
@@ -448,7 +455,7 @@ func TestKeyFullFlowLeaksNothing(t *testing.T) {
 
 	s := newTestServer(t, nil, nil)
 	noKey(t, s)
-	writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1000}`, fake.URL))
+	writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1000,"reasoning_effort":"high"}`, fake.URL))
 	h := s.Handler()
 
 	var all strings.Builder
@@ -475,8 +482,8 @@ func TestKeyFullFlowLeaksNothing(t *testing.T) {
 	record(do(t, h, http.MethodPut, "/api/key", `{"`+secret+`":1}`))
 	record(do(t, h, http.MethodPut, "/api/key", `{"key":"`+secret+`","`+secret+`":1}`))
 	record(do(t, h, http.MethodPut, "/api/key", `{"key":"`+secret))
-	record(do(t, h, http.MethodPut, "/api/settings", `{"base_url":"`+secret+`","model":"m","context_budget":1}`))
-	record(do(t, h, http.MethodPut, "/api/settings", `{"base_url":"https://a.example/v1","model":"`+secret+`\nx","context_budget":1}`))
+	record(do(t, h, http.MethodPut, "/api/settings", `{"base_url":"`+secret+`","model":"m","context_budget":1,"reasoning_effort":"high"}`))
+	record(do(t, h, http.MethodPut, "/api/settings", `{"base_url":"https://a.example/v1","model":"`+secret+`\nx","context_budget":1,"reasoning_effort":"high"}`))
 	record(do(t, h, http.MethodDelete, "/api/key", ""))
 	record(do(t, h, http.MethodGet, "/api/settings", ""))
 
@@ -658,7 +665,7 @@ func TestCheckKeyUsesConfiguredAddressAndBearerOnly(t *testing.T) {
 	defer trap.Close()
 
 	s := newTestServer(t, nil, nil)
-	writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1000}`, fake.URL+"/custom/v1/"))
+	writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1000,"reasoning_effort":"high"}`, fake.URL+"/custom/v1/"))
 	h := s.Handler()
 	rec := do(t, h, http.MethodPost, "/api/key/check", "")
 	m := jsonOf(t, rec)
@@ -697,7 +704,7 @@ func TestCheckKeyStatuses(t *testing.T) {
 			}))
 			defer fake.Close()
 			s := newTestServer(t, nil, nil)
-			writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1}`, fake.URL))
+			writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1,"reasoning_effort":"high"}`, fake.URL))
 			rec := do(t, s.Handler(), http.MethodPost, "/api/key/check", "")
 			var r checkResult
 			json.Unmarshal(rec.Body.Bytes(), &r)
@@ -722,7 +729,7 @@ func TestCheckKeyWithoutKey(t *testing.T) {
 	}
 	s := newTestServer(t, nil, nil)
 	noKey(t, s)
-	writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1}`, fake.URL))
+	writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1,"reasoning_effort":"high"}`, fake.URL))
 	rec := do(t, s.Handler(), http.MethodPost, "/api/key/check", "")
 	m := jsonOf(t, rec)
 	if rec.Code != 200 || m["ok"] != false || m["message"] != errNoKey.Error() || keysOfMap(m) != "message,ok" {
@@ -762,7 +769,7 @@ func TestCheckKeyFailures(t *testing.T) {
 	for name, url := range map[string]string{"порт закрыт": deadURL, "перенаправление": redirect.URL, "молчит": slow.URL} {
 		s := newTestServer(t, nil, nil)
 		s.keyCheckTimeout = 100 * time.Millisecond
-		writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1}`, url))
+		writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1,"reasoning_effort":"high"}`, url))
 		r := postCheck(t, s.Handler())
 		if r.OK || !cyrillicRe.MatchString(r.Message) {
 			t.Errorf("%s: %+v", name, r)
@@ -878,7 +885,7 @@ func TestTurnWithoutKeyIs400AndWritesNothing(t *testing.T) {
 // игнорируется.
 func TestTurnUsesSavedSettingsAndIgnoresProfileField(t *testing.T) {
 	s := newTestServer(t, nil, nil)
-	writeConfig(t, s, `{"base_url":"https://gw.example/v1","model":"vendor/model-x","context_budget":777}`)
+	writeConfig(t, s, `{"base_url":"https://gw.example/v1","model":"vendor/model-x","context_budget":777,"reasoning_effort":"max"}`)
 	var got app.Connection
 	s.NewProvider = func(c app.Connection) (provider.Provider, error) {
 		got = c
@@ -889,7 +896,7 @@ func TestTurnUsesSavedSettingsAndIgnoresProfileField(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "event: done") {
 		t.Fatalf("код %d: %.300s", rec.Code, rec.Body.String())
 	}
-	want := app.Connection{BaseURL: "https://gw.example/v1", Model: "vendor/model-x", Key: testKey, ContextBudget: 777}
+	want := app.Connection{BaseURL: "https://gw.example/v1", Model: "vendor/model-x", Key: testKey, ReasoningEffort: "max", ContextBudget: 777}
 	if got != want {
 		t.Fatalf("подключение %+v, ожидалось %+v", got, want)
 	}
@@ -930,7 +937,7 @@ func TestKeyFromTurnErrorIsNotLeaked(t *testing.T) {
 		w.Write([]byte(`{"error":"Incorrect API key provided: ` + r.Header.Get("Authorization")[len("Bearer "):] + `"}`))
 	}))
 	defer fake.Close()
-	writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1000}`, fake.URL))
+	writeConfig(t, s, fmt.Sprintf(`{"base_url":%q,"model":"m","context_budget":1000,"reasoning_effort":"high"}`, fake.URL))
 	s.Finder = fakeFinder{}
 	var logs bytes.Buffer
 	log.SetOutput(&logs)

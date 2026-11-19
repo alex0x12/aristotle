@@ -141,7 +141,8 @@ func TestTurnWorksUnderBrokenConfig(t *testing.T) {
 			if rec.Code != 200 || !strings.Contains(rec.Body.String(), "event: done") {
 				t.Fatalf("код %d: %.300s", rec.Code, rec.Body.String())
 			}
-			want := app.Connection{BaseURL: config.DefaultBaseURL, Model: config.DefaultModel, Key: testKey, ContextBudget: config.DefaultContextBudget}
+			want := app.Connection{BaseURL: config.DefaultBaseURL, Model: config.DefaultModel, Key: testKey,
+				ReasoningEffort: config.DefaultReasoningEffort, ContextBudget: config.DefaultContextBudget}
 			if got != want {
 				t.Fatalf("подключение %+v, ожидалось умолчание %+v", got, want)
 			}
@@ -201,7 +202,7 @@ func TestPutSettingsOverBrokenConfigBacksItUpFirst(t *testing.T) {
 			if doc := getSettings(t, h); !doc.Degraded {
 				t.Fatalf("GET не сообщил о повреждении: %+v", doc)
 			}
-			rec := putSettings(t, h, `{"base_url":"https://openrouter.ai/api/v1","model":"anthropic/claude-opus-5","context_budget":32000}`)
+			rec := putSettings(t, h, `{"base_url":"https://openrouter.ai/api/v1","model":"anthropic/claude-opus-5","context_budget":32000,"reasoning_effort":"high"}`)
 			if rec.Code != 200 {
 				t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 			}
@@ -214,7 +215,7 @@ func TestPutSettingsOverBrokenConfigBacksItUpFirst(t *testing.T) {
 				t.Fatalf("backup %q, degraded %v, warning %q, model %q", out.Backup, out.Degraded, out.Warning, out.Model)
 			}
 			cfg, err := config.Load(s.Paths.Config)
-			if err != nil || cfg != (config.Config{BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-opus-5", ContextBudget: 32000}) {
+			if err != nil || cfg != (config.Config{BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-opus-5", ReasoningEffort: "high", ContextBudget: 32000}) {
 				t.Fatalf("конфиг после сохранения: %+v, %v", cfg, err)
 			}
 			backup := filepath.Join(filepath.Dir(s.Paths.Config), out.Backup)
@@ -227,7 +228,7 @@ func TestPutSettingsOverBrokenConfigBacksItUpFirst(t *testing.T) {
 			}
 			// второй PUT: файл уже в порядке — копия не нужна и не тронута
 			before, _ := os.Stat(backup)
-			rec2 := putSettings(t, h, `{"base_url":"https://openrouter.ai/api/v1","model":"anthropic/claude-opus-5","context_budget":16000}`)
+			rec2 := putSettings(t, h, `{"base_url":"https://openrouter.ai/api/v1","model":"anthropic/claude-opus-5","context_budget":16000,"reasoning_effort":"high"}`)
 			if rec2.Code != 200 || strings.Contains(rec2.Body.String(), `"backup"`) {
 				t.Fatalf("второй PUT: код %d, %s", rec2.Code, rec2.Body.String())
 			}
@@ -243,7 +244,7 @@ func TestPutSettingsOverBrokenConfigBacksItUpFirst(t *testing.T) {
 }
 
 // validSettings — допустимый документ настроек для PUT.
-const validSettings = `{"base_url":"https://api.example.com/v1","model":"m","context_budget":1000}`
+const validSettings = `{"base_url":"https://api.example.com/v1","model":"m","context_budget":1000,"reasoning_effort":"high"}`
 
 // Копию сделать не удалось — отказ по-русски, испорченный файл не тронут.
 func TestPutSettingsRefusesWhenBackupCannotBeMade(t *testing.T) {
@@ -295,7 +296,7 @@ func TestPutSettingsValidatesBeforeBackup(t *testing.T) {
 	s := corruptConfigServer(t)
 	fixedClock(s)
 	h := s.Handler()
-	if rec := putSettings(t, h, `{"base_url":"ftp://x","model":"m","context_budget":1}`); rec.Code != http.StatusBadRequest {
+	if rec := putSettings(t, h, `{"base_url":"ftp://x","model":"m","context_budget":1,"reasoning_effort":"high"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("код %d", rec.Code)
 	}
 	if m, _ := filepath.Glob(s.Paths.Config + ".bad-*"); len(m) != 0 {

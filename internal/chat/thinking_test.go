@@ -54,7 +54,7 @@ func TestReasoningGoesBackInsideToolLoopAndAcrossTurns(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := &Session{Provider: openaicompat.New(srv.URL, "m", "к"), Corpus: &fakeFinder{}}
+	s := &Session{Provider: openaicompat.New(srv.URL, "m", "к", "high"), Corpus: &fakeFinder{}}
 	res, err := s.Turn(context.Background(), "что такое добродетель?", nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestReasoningGoesBackInsideToolLoopAndAcrossTurns(t *testing.T) {
 		return
 	}
 	// Запрос 1: истории ответов нет, параметры режима на месте.
-	if len(assistants(bodies[0])) != 0 || bodies[0]["reasoning_effort"] != "max" {
+	if len(assistants(bodies[0])) != 0 || bodies[0]["reasoning_effort"] != "high" {
 		t.Fatalf("запрос 1: %+v", bodies[0])
 	}
 	// Запрос 2: ответ с вызовом поиска несёт своё рассуждение.
