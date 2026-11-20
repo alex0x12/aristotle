@@ -1,0 +1,43 @@
+physics:
+  title: "Физика"
+  volume: 3
+  first: 60
+  last: 261
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "В. П. Карпов"
+  year: "1936"
+  group: physics
+  heads: ["ФИЗИКА"]
+
+on-the-heavens:
+  title: "О небе"
+  volume: 3
+  first: 263
+  last: 376
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "А. В. Лебедев"
+  year: "1981"
+  group: physics
+  heads: ["О НЕБЕ"]
+
+generation-and-corruption:
+  title: "О возникновении и уничтожении"
+  volume: 3
+  first: 378
+  last: 437
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "Т. А. Миллер"
+  year: "1981"
+  group: physics
+  heads: ["О ВОЗНИКНОВЕНИИ И УНИЧТОЖЕНИИ"]
+
+meteorology:
+  title: "Метеорология"
+  volume: 3
+  first: 439
+  last: 552
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "Н. В. Брагинская"
+  year: "1981"
+  group: physics
+  heads: ["МЕТЕОРОЛОГИКА"]

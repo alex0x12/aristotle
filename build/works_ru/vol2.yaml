@@ -1,0 +1,65 @@
+categories:
+  title: "Категории"
+  volume: 2
+  first: 53
+  last: 90
+  expect: "ГЛАВА ПЕРВАЯ"
+  translator: "А. В. Кубицкий"
+  year: "1939"
+  group: logic
+  heads: ["КАТЕГОРИИ"]
+
+on-interpretation:
+  title: "Об истолковании"
+  volume: 2
+  first: 92
+  last: 115
+  expect: "ГЛАВА ПЕРВАЯ"
+  translator: "Э. Л. Радлов"
+  year: "1891"
+  group: logic
+  heads: ["ОБ ИСТОЛКОВАНИИ"]
+
+prior-analytics:
+  title: "Первая аналитика"
+  volume: 2
+  first: 117
+  last: 252
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "Б. А. Фохт"
+  year: "1952"
+  group: logic
+  heads: ["ПЕРВАЯ АНАЛИТИКА"]
+
+posterior-analytics:
+  title: "Вторая аналитика"
+  volume: 2
+  first: 254
+  last: 343
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "Б. А. Фохт"
+  year: "1952"
+  group: logic
+  heads: ["ВТОРАЯ АНАЛИТИКА"]
+
+topics:
+  title: "Топика"
+  volume: 2
+  first: 345
+  last: 527
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "М. И. Иткин"
+  year: "1978"
+  group: logic
+  heads: ["ТОПИКА"]
+
+sophistical-refutations:
+  title: "О софистических опровержениях"
+  volume: 2
+  first: 529
+  last: 587
+  expect: "ГЛАВА ПЕРВАЯ"
+  translator: "М. И. Иткин"
+  year: "1978"
+  group: logic
+  heads: ["О СОФИСТИЧЕСКИХ ОПРОВЕРЖЕНИЯХ"]

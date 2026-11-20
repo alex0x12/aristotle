@@ -1,0 +1,21 @@
+metaphysics:
+  title: "Метафизика"
+  volume: 1
+  first: 66
+  last: 369
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "А. В. Кубицкий"
+  year: "1934"
+  group: metaphysics
+  heads: ["МЕТАФИЗИКА"]
+
+on-the-soul:
+  title: "О душе"
+  volume: 1
+  first: 370
+  last: 447
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "П. С. Попов"
+  year: "1937"
+  group: psychology
+  heads: ["О ДУШЕ"]

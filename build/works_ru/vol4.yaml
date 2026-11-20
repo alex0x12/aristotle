@@ -1,0 +1,39 @@
+# Том 4 (1983). Слова «ГЛАВА» в томе нет: у каждой работы своя разметка.
+# НЭ — римское число в скобках (арабское перед ним — счётчик абзацев).
+# «Политика» — римская глава, сразу за ней номер абзаца «1.».
+# «Поэтика» — обычный номер с точкой в начале абзаца.
+nicomachean-ethics:
+  title: "Никомахова этика"
+  volume: 4
+  first: 55
+  last: 294
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "Н. В. Брагинская"
+  year: "1983"
+  group: ethics
+  heads: ["НИКОМАХОВА ЭТИКА"]
+  style: ne
+
+politics:
+  title: "Политика"
+  volume: 4
+  first: 376
+  last: 644
+  expect: "КНИГА ПЕРВАЯ"
+  translator: "С. А. Жебелев"
+  year: "1911"
+  group: politics
+  heads: ["ПОЛИТИКА"]
+  style: politics
+
+poetics:
+  title: "Поэтика"
+  volume: 4
+  first: 646
+  last: 680
+  expect: "О поэтическом искусстве"
+  translator: "М. Л. Гаспаров"
+  year: "1978"
+  group: rhetoric-poetics
+  heads: ["ПОЭТИКА"]
+  style: numbered
