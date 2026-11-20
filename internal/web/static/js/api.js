@@ -19,6 +19,23 @@ export async function send(method, path, body) {
   return res.status === 204 ? null : res.json();
 }
 
+// Язык корпуса — один на библиотеку и беседу, хранится в браузере.
+// Английский — по умолчанию; сервер знает только en/ru.
+const LANG_KEY = 'corpus-lang';
+export function getLang() {
+  return localStorage.getItem(LANG_KEY) === 'ru' ? 'ru' : 'en';
+}
+export function setLang(lang) {
+  localStorage.setItem(LANG_KEY, lang === 'ru' ? 'ru' : 'en');
+}
+// langQuery — для адресов с уже начатой строкой запроса (?q=…).
+export function langQuery() {
+  return getLang() === 'ru' ? '&lang=ru' : '';
+}
+export function langParam() {
+  return getLang() === 'ru' ? '?lang=ru' : '';
+}
+
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ESC[c]); }
 

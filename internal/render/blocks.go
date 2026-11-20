@@ -21,9 +21,12 @@ type Block struct {
 	En       string `json:"en,omitempty"`
 	Ru       string `json:"ru,omitempty"`
 	Verified bool   `json:"verified"`
-	// Chapter — путь главы в corpus/ для панели источников; пусто, если
-	// главы с такой ссылкой в выдаче хода не было.
+	// Chapter — путь главы в corpus/ (или corpus-ru/) для панели источников;
+	// пусто, если главы с такой ссылкой в выдаче хода не было.
 	Chapter string `json:"chapter,omitempty"`
+	// Lang — язык корпуса, из которого пришла глава: "" или "en" — английский,
+	// "ru" — локальный русский. Панель источников по нему выбирает корень.
+	Lang string `json:"lang,omitempty"`
 }
 
 // Assembler собирает врезку из трёх строк (cite, en, ru) по тем же правилам,
@@ -32,9 +35,15 @@ type Block struct {
 type Assembler struct {
 	cite, en, chapter string
 	verified, hasEn   bool
+	// Lang — язык корпуса текущего хода; переносится в каждую врезку, чтобы
+	// панель источников знала, какой корень читать.
+	Lang string
 }
 
-func (a *Assembler) reset() { *a = Assembler{} }
+func (a *Assembler) reset() {
+	lang := a.Lang
+	*a = Assembler{Lang: lang}
+}
 
 func (a *Assembler) Handle(ev Event, chapters []corpus.Chapter) []Block {
 	switch ev.Kind {
@@ -51,7 +60,7 @@ func (a *Assembler) Handle(ev Event, chapters []corpus.Chapter) []Block {
 		a.chapter = chapterPath(a.cite, chapters)
 	case Ru:
 		b := Block{Kind: BlockQuote, Cite: a.cite, En: a.en, Ru: ev.Text,
-			Verified: a.verified, Chapter: a.chapter}
+			Verified: a.verified, Chapter: a.chapter, Lang: a.Lang}
 		a.reset()
 		return []Block{b}
 	case Inference, FactNote, PremiseNote:
@@ -67,7 +76,8 @@ func (a *Assembler) Flush() []Block {
 		a.reset()
 		return nil
 	}
-	b := Block{Kind: BlockQuote, Cite: a.cite, En: a.en, Verified: a.verified, Chapter: a.chapter}
+	b := Block{Kind: BlockQuote, Cite: a.cite, En: a.en, Verified: a.verified,
+		Chapter: a.chapter, Lang: a.Lang}
 	a.reset()
 	return []Block{b}
 }

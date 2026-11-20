@@ -44,9 +44,15 @@ func NewHistoryPath(dir string, now time.Time) string {
 	return filepath.Join(dir, now.UTC().Format(HistoryLayout)+".jsonl")
 }
 
-// NewSearcher — поиск по корпусу репозитория root.
+// NewSearcher — поиск по английскому корпусу репозитория root.
 func NewSearcher(root string) *corpus.Searcher {
 	return &corpus.Searcher{Collection: "aristotle", Root: filepath.Join(root, "corpus")}
+}
+
+// NewSearcherRu — поиск по локальному русскому корпусу (corpus-ru/, коллекция
+// aristotle-ru). Корпус собирается отдельно и в git не входит.
+func NewSearcherRu(root string) *corpus.Searcher {
+	return &corpus.Searcher{Collection: "aristotle-ru", Root: filepath.Join(root, "corpus-ru")}
 }
 
 // DropLastTurn убирает последний ход — от последней реплики пользователя с

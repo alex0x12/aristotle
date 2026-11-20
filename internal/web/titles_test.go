@@ -300,7 +300,7 @@ func TestRenderBlockWireFormIsUnchanged(t *testing.T) {
 	for i := 0; i < typ.NumField(); i++ {
 		tags = append(tags, typ.Field(i).Tag.Get("json"))
 	}
-	want := "kind text,omitempty cite,omitempty en,omitempty ru,omitempty verified chapter,omitempty"
+	want := "kind text,omitempty cite,omitempty en,omitempty ru,omitempty verified chapter,omitempty lang,omitempty"
 	if strings.Join(tags, " ") != want {
 		t.Errorf("теги render.Block: %q, ожидалось %q", strings.Join(tags, " "), want)
 	}

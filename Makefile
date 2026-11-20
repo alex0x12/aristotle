@@ -26,7 +26,7 @@ endif
 
 .DEFAULT_GOAL := help
 .PHONY: help build run web install uninstall test test-go test-py check fmt vet eval eval-recall \
-        corpus corpus-force index recall assets install-skill uninstall-skill clean
+        corpus corpus-force index index-ru recall assets install-skill uninstall-skill clean
 
 help: ## Показать эту справку
 	@printf 'Цели:\n'
@@ -100,6 +100,18 @@ index: ## Завести коллекцию qmd и построить эмбед
 	qmd collection add $(CORPUS_DIR) --name $(COLLECTION) --pattern '**/*.md'
 	qmd context add qmd://$(COLLECTION)/ "$(QMD_CONTEXT)"
 	qmd embed -c $(COLLECTION)
+
+# Русский корпус — отдельной коллекцией: он локальный (corpus-ru/ в .gitignore)
+# и не смешивается с английским при поиске.
+RU_COLLECTION  := aristotle-ru
+RU_CORPUS_DIR  := $(CURDIR)/corpus-ru
+RU_QMD_CONTEXT := Полный русский корпус Аристотеля: переводы четырёхтомника «Философское наследие» (1976–1983) и работы вне его; один файл на главу, у «О частях животных» и «О возникновении животных» — файл на книгу; source: pdf/file, lang: ru
+
+index-ru: ## Завести русскую коллекцию qmd и построить эмбеддинги (минуты)
+	qmd collection show $(RU_COLLECTION) >/dev/null 2>&1 || \
+		qmd collection add $(RU_CORPUS_DIR) --name $(RU_COLLECTION) --pattern '**/*.md'
+	qmd context add qmd://$(RU_COLLECTION)/ "$(RU_QMD_CONTEXT)"
+	qmd embed -c $(RU_COLLECTION)
 
 recall: ## Recall поиска по вопросам, без модели (PHILOSOPHER=<slug> — пакет)
 	cd build && venv/bin/python recall.py $(PHIL_FLAG)

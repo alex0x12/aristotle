@@ -1,4 +1,4 @@
-import { get, esc, usageText, usageIsPartial } from './api.js';
+import { get, esc, usageText, usageIsPartial, getLang, setLang, langParam } from './api.js';
 import { readSSE } from './stream.js';
 import { openSource } from './sources.js';
 import { quoteHead } from './titles.js';
@@ -70,7 +70,9 @@ function markTrim(msgs, trim) {
 
 export async function showDialog(center, id, app) {
   center.innerHTML = `<div class="dialog">
-    <div class="dialog-head"><span id="conv-title"></span><a id="export" href="/api/conversations/${id}/export.md">ЭКСПОРТ .MD</a></div>
+    <div class="dialog-head"><span id="conv-title"></span><span class="head-end"><span class="langsw" id="chat-lang" role="group" aria-label="Язык корпуса">
+      <button type="button" data-lang="en" title="Английский корпус">EN</button><button type="button" data-lang="ru" title="Русский корпус (переводы)">RU</button>
+    </span><a id="export" href="/api/conversations/${id}/export.md">ЭКСПОРТ .MD</a></span></div>
     <div class="msgs" id="msgs"></div>
     <div class="status" id="status" hidden></div>
     <div class="banner" id="banner" hidden></div>
@@ -89,7 +91,29 @@ export async function showDialog(center, id, app) {
     send: center.querySelector('#send'), stop: center.querySelector('#stop'),
     again: center.querySelector('#again'), title: center.querySelector('#conv-title'),
     nokey: center.querySelector('#nokey'), controller: null,
+    langBox: center.querySelector('#chat-lang'),
   };
+  // Язык корпуса: EN — английский, RU — локальный русский перевод. Выбор
+  // общий с библиотекой; меняет поиск следующего хода, не прошлые ответы.
+  const paintLang = () => {
+    const lang = getLang();
+    for (const b of v.langBox.querySelectorAll('button')) {
+      const on = b.dataset.lang === lang;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+  };
+  paintLang();
+  v.langBox.addEventListener('click', e => {
+    const b = e.target.closest('button[data-lang]');
+    if (!b || b.dataset.lang === getLang()) return;
+    setLang(b.dataset.lang);
+    paintLang();
+    addBanner(v, b.dataset.lang === 'ru'
+      ? 'следующие поиски пойдут по русскому переводу (corpus-ru)'
+      : 'следующие поиски пойдут по английскому корпусу (corpus)');
+  });
+
   let conv;
   try {
     conv = await get(`/api/conversations/${id}`);
@@ -261,7 +285,7 @@ async function ask(v, text, again, prev = null) {
   const notice = msg => ans.append(el(`<p class="stopped">${esc(msg)}</p>`));
 
   try {
-    const url = `/api/conversations/${v.id}/${again ? 'again' : 'turns'}`;
+    const url = `/api/conversations/${v.id}/${again ? 'again' : 'turns'}` + langParam();
     let res;
     try {
       res = await fetch(url, {

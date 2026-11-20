@@ -51,7 +51,10 @@ export async function openSource(b) {
     return;
   }
   try {
-    const ch = await get('/api/corpus/chapter?path=' + encodeURIComponent(b.chapter));
+    // Язык берём у самой врезки, а не текущий переключатель: старые ответы
+    // пришли из другого корпуса, и их глава лежит именно там.
+    const lq = b.lang === 'ru' ? '&lang=ru' : '';
+    const ch = await get('/api/corpus/chapter?path=' + encodeURIComponent(b.chapter) + lq);
     const chText = ch.text ?? ''; // поля с omitempty на проводе бывают без ключа
     const ranges = findExcerpt(chText, b.en || '');
     holder.innerHTML = (ranges.length ? '' : `<p class="en">${esc(b.en)}</p>`) +

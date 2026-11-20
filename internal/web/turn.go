@@ -34,9 +34,16 @@ func (s *Server) system() (string, error) {
 	return persona.Load(filepath.Join(s.Root, "persona"))
 }
 
-func (s *Server) finder() chat.Finder {
+func (s *Server) finder() chat.Finder { return s.finderFor(langEn) }
+
+// finderFor — поиск по выбранному языку корпуса. Тестовая подмена одна на
+// оба языка: тестам важно, что запрос дошёл, а не какая коллекция qmd выбрана.
+func (s *Server) finderFor(lang string) chat.Finder {
 	if s.Finder != nil {
 		return s.Finder
+	}
+	if lang == langRu {
+		return app.NewSearcherRu(s.Root)
 	}
 	return app.NewSearcher(s.Root)
 }
@@ -51,6 +58,24 @@ func (s *Server) providerFor(c app.Connection) (provider.Provider, error) {
 // errNoKey — ответ браузеру, когда ключа нет: только про «Настройки». Подсказка
 // про командную строку в веб-интерфейсе лишняя; консоль показывает app.ErrNoKey.
 var errNoKey = errors.New("ключ API не задан: задайте его в «Настройках»")
+
+// ruCorpusPrompt — добавка к персоне, когда беседа ищет в русском корпусе.
+// Меняет только язык поиска и содержимое врезки; регистры и дисциплина
+// выдержек остаются из 05-contract.md.
+const ruCorpusPrompt = `
+
+---
+
+# Русский корпус
+
+В этой беседе search_corpus ищет в русском переводе. Запрос формулируй
+по-русски, в понятиях Аристотеля. Заголовок cite бери буквально из пришедшей
+главы: он уже по-русски, например «Никомахова этика I.7». Строка en — дословная
+русская выдержка из этой же главы: по ней идёт сверка. Строку ru повтори теми
+же словами, что en: переводить русскую выдержку на русский нечего, клиент
+покажет ru. Английские примеры в правилах выше — образец формы, а не языка:
+в этой беседе cite, en и ru пишутся по-русски. Остальные маркеры и правила
+прежние.`
 
 // connection — подключение для хода: настройки с диска (испорченный
 // config.json — умолчания) и ключ из keys.json. Ошибка — готовый ответ
@@ -82,16 +107,40 @@ func (s *Server) session(c *conv, conn app.Connection, prov provider.Provider) (
 		if err != nil {
 			return nil, err
 		}
+		c.baseSystem = system
 		c.session = &chat.Session{Corpus: s.finder(), System: system, Messages: app.ResumeMessages(recs)}
+	}
+	if c.baseSystem == "" {
+		c.baseSystem = c.session.System
 	}
 	c.session.Provider = prov
 	c.session.Budget = conn.ContextBudget
 	return c.session, nil
 }
 
+// prepareSession ставит сессии язык корпуса на этот ход: системную добавку и
+// поиск. Персона хранится отдельно (conv.baseSystem), чтобы переключение
+// туда-обратно не накапливало добавку.
+func (s *Server) prepareSession(sess *chat.Session, c *conv, lang string) {
+	base := c.baseSystem
+	if base == "" {
+		base = sess.System
+	}
+	sess.System = base
+	if lang == langRu {
+		sess.System = base + ruCorpusPrompt
+	}
+	sess.Corpus = s.finderFor(lang)
+}
+
 func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.convFromPath(w, r)
 	if !ok {
+		return
+	}
+	lang, ok := corpusLang(r.URL.Query().Get("lang"))
+	if !ok {
+		http.Error(w, "неверный язык корпуса", http.StatusBadRequest)
 		return
 	}
 	var in turnIn
@@ -104,7 +153,7 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.mu.Unlock()
-	s.runTurn(w, r, c, strings.TrimSpace(in.Text), nil)
+	s.runTurn(w, r, c, strings.TrimSpace(in.Text), lang, nil)
 }
 
 // handleAgain отзывает последний вопрос с ответом и задаёт вопрос снова.
@@ -114,6 +163,11 @@ func (s *Server) handleTurn(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAgain(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.convFromPath(w, r)
 	if !ok {
+		return
+	}
+	lang, ok := corpusLang(r.URL.Query().Get("lang"))
+	if !ok {
+		http.Error(w, "неверный язык корпуса", http.StatusBadRequest)
 		return
 	}
 	if !c.mu.TryLock() {
@@ -139,7 +193,7 @@ func (s *Server) handleAgain(w http.ResponseWriter, r *http.Request) {
 	// Откатанного хода в сессии нет: снимать с неё нечего, иначе «ещё раз»
 	// после сбоя выбросило бы предыдущий, удавшийся ход.
 	inSession := app.LastTurnKept(recs)
-	s.runTurn(w, r, c, last, func() error {
+	s.runTurn(w, r, c, last, lang, func() error {
 		if err := c.history.Append(chat.Record{Role: chat.RoleRetract}); err != nil {
 			return err
 		}
@@ -153,7 +207,7 @@ func (s *Server) handleAgain(w http.ResponseWriter, r *http.Request) {
 
 // runTurn ведёт один ход потоком событий. retract (может быть nil) вызывается
 // после всех проверок, перед первой записью в журнал.
-func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text string, retract func() error) {
+func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text, lang string, retract func() error) {
 	conn, err := s.connection()
 	if err != nil { // нет ключа или keys.json не читается: журнал не тронут
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -175,6 +229,7 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text s
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.prepareSession(sess, c, lang)
 	out, ok := newSSE(w)
 	if !ok {
 		http.Error(w, "поток не поддерживается", http.StatusInternalServerError)
@@ -209,7 +264,7 @@ func (s *Server) runTurn(w http.ResponseWriter, r *http.Request, c *conv, text s
 	var chapters []corpus.Chapter
 	var blocks []render.Block
 	parser := &render.Parser{}
-	asm := &render.Assembler{}
+	asm := &render.Assembler{Lang: lang}
 	emit := func(bs []render.Block) {
 		for _, b := range bs {
 			blocks = append(blocks, b) // в журнал уходит чистый Block

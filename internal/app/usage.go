@@ -45,7 +45,8 @@ func QuotesOf(blocks []render.Block) []chat.Quote {
 		if b.Kind != render.BlockQuote {
 			continue
 		}
-		out = append(out, chat.Quote{Cite: b.Cite, En: b.En, Ru: b.Ru, Verified: b.Verified, Chapter: b.Chapter})
+		out = append(out, chat.Quote{Cite: b.Cite, En: b.En, Ru: b.Ru, Verified: b.Verified,
+			Chapter: b.Chapter, Lang: b.Lang})
 	}
 	return out
 }
