@@ -23,8 +23,9 @@ const FORM = `
     <div class="grid">
       <label for="f-free">Бесплатные OpenCode</label>
       <div class="field"><select id="f-free" disabled><option value="">— выбрать модель —</option></select>
-        <p class="hint">Подставляет адрес OpenCode и выбранную бесплатную модель. Для них нужен ключ
-          <code>public</code>: если ключа ещё нет, он подставится в поле ниже — останется нажать «Сохранить ключ».</p></div>
+        <p class="hint">Подставляет адрес OpenCode и выбранную бесплатную модель; ключ <code>public</code>
+          сохраняется сам, если его ещё нет. Бесплатный лимит OpenCode общий: когда он исчерпан,
+          провайдер отвечает <code>FreeUsageLimitError</code> — это не ошибка ключа.</p></div>
       <label for="f-base">Адрес API</label>
       <div class="field"><input id="f-base" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.deepseek.com/v1">
         <p class="hint">Адрес API, совместимого с OpenAI, например https://api.deepseek.com/v1. Ключ отправляется на этот адрес.</p></div>
