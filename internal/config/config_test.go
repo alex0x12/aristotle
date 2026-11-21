@@ -196,6 +196,15 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsOpenCodeCLI(t *testing.T) {
+	c := Default()
+	c.BaseURL = OpenCodeCLI
+	c.Model = "beam-free"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("opencode-cli отвергнут: %v", err)
+	}
+}
+
 // Ошибка проверки не повторяет присланное значение: в адресе мог оказаться
 // пароль, а в модели — вставленный по ошибке ключ.
 func TestValidateErrorDoesNotEchoValue(t *testing.T) {

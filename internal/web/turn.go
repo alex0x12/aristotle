@@ -8,6 +8,7 @@ import (
 
 	"github.com/alex0x12/aristotle/internal/app"
 	"github.com/alex0x12/aristotle/internal/chat"
+	"github.com/alex0x12/aristotle/internal/config"
 	"github.com/alex0x12/aristotle/internal/corpus"
 	"github.com/alex0x12/aristotle/internal/persona"
 	"github.com/alex0x12/aristotle/internal/provider"
@@ -87,7 +88,7 @@ func (s *Server) connection() (app.Connection, error) {
 	if err != nil {
 		return app.Connection{}, errors.New(keysUnreadableText + ": ключ не прочитать")
 	}
-	if key == "" {
+	if key == "" && cfg.BaseURL != config.OpenCodeCLI {
 		return app.Connection{}, errNoKey
 	}
 	return app.Connection{BaseURL: cfg.BaseURL, Model: cfg.Model, Key: key,

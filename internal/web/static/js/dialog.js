@@ -203,7 +203,8 @@ function syncAgain(v) { v.again.hidden = !v.msgs.querySelector('.turn'); }
 // сам сервер. Не загрузилось состояние — подсказки нет: ничего не известно.
 function syncKeyHint(v) {
   const key = v.app.state?.key;
-  v.nokey.hidden = !(key?.set === false && !(key.warning ?? ''));
+  v.nokey.hidden = !(key?.set === false && !(key.warning ?? '') &&
+    v.app.state?.base_url !== 'opencode-cli');
 }
 
 // addBanner — предупреждения и ошибки накапливаются: поздняя не должна

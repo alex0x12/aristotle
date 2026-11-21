@@ -29,6 +29,11 @@ const (
 	DefaultCorpusK       = 6
 
 	DefaultReasoningEffort = "high"
+
+	// OpenCodeCLI — служебное значение base_url: гнать запросы не по HTTP,
+	// а через локальный `opencode run`. Нужно бесплатным моделям OpenCode:
+	// их прямой HTTP-шлюз отвечает FreeUsageLimitError, а CLI работает.
+	OpenCodeCLI = "opencode-cli"
 )
 
 // ReasoningEfforts — допустимые усилия размышления. DeepSeek различает ровно
@@ -99,6 +104,9 @@ func (c Config) Validate() error {
 // ValidateBaseURL — адрес API: только http и https, хост обязателен, логина и
 // пароля в адресе нет (они попали бы в сообщения об ошибках и журнал).
 func ValidateBaseURL(raw string) error {
+	if raw == OpenCodeCLI {
+		return nil // служебный режим: локальный opencode run
+	}
 	if raw == "" {
 		return fieldErr("base_url", "адрес API обязателен")
 	}

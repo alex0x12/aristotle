@@ -894,3 +894,32 @@ func TestRussianQuoteCarriesLang(t *testing.T) {
 	}
 	t.Fatal("в журнале нет ответа с врезкой")
 }
+
+func TestConnectionAllowsNoKeyForOpenCodeCLI(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	noKey(t, s)
+	data := `{"base_url":"opencode-cli","model":"beam-free","reasoning_effort":"high","context_budget":1000}`
+	if err := os.WriteFile(s.Paths.Config, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := s.connection()
+	if err != nil {
+		t.Fatalf("opencode-cli без ключа: %v", err)
+	}
+	if conn.BaseURL != "opencode-cli" || conn.Model != "beam-free" {
+		t.Fatalf("подключение: %+v", conn)
+	}
+}
+
+func TestCheckKeyForOpenCodeCLIIsNoop(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	noKey(t, s)
+	data := `{"base_url":"opencode-cli","model":"beam-free","reasoning_effort":"high","context_budget":1000}`
+	if err := os.WriteFile(s.Paths.Config, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := do(t, s.Handler(), http.MethodPost, "/api/key/check", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "ключ не нужен") {
+		t.Fatalf("проверка ключа для CLI: %d %s", rec.Code, rec.Body.String())
+	}
+}

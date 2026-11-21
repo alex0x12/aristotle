@@ -28,7 +28,9 @@ const FORM = `
           провайдер отвечает <code>FreeUsageLimitError</code> — это не ошибка ключа.</p></div>
       <label for="f-base">Адрес API</label>
       <div class="field"><input id="f-base" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.deepseek.com/v1">
-        <p class="hint">Адрес API, совместимого с OpenAI, например https://api.deepseek.com/v1. Ключ отправляется на этот адрес.</p></div>
+        <p class="hint">Адрес API, совместимого с OpenAI, например https://api.deepseek.com/v1. Ключ отправляется на этот адрес.
+          Служебное значение <code>opencode-cli</code> — запросы идут через локальный <code>opencode run</code>
+          (так работают бесплатные модели OpenCode).</p></div>
       <label for="f-model">Модель</label>
       <div class="field"><input id="f-model" type="text" autocomplete="off" spellcheck="false" placeholder="deepseek-flash">
         <p class="hint">Название модели у этого провайдера, например deepseek-flash.</p></div>
@@ -88,7 +90,6 @@ async function settingsTab(box, app) {
   p.innerHTML = FORM;
   const $ = s => p.querySelector(s);
   const f = { free: $('#f-free'), base: $('#f-base'), model: $('#f-model'), effort: $('#f-effort'), budget: $('#f-budget') };
-  let freeBase = ''; // адрес из /api/opencode/models; пустой — список ещё не загружен
   const els = {
     err: $('#err'), status: $('#status'), backup: $('#backup'),
     keyStatus: $('#key-status'), key: $('#key-input'), note: $('#key-note'),
@@ -119,7 +120,6 @@ async function settingsTab(box, app) {
   (async () => {
     try {
       const fm = await get('/api/opencode/models');
-      freeBase = fm?.base_url ?? '';
       for (const m of fm?.models ?? []) {
         const o = document.createElement('option');
         o.value = m.id;
@@ -213,12 +213,16 @@ async function settingsTab(box, app) {
       fail('Бюджет контекста: введите число; 0 — без урезания.');
       return;
     }
-    f.base.value = freeBase || f.base.value;
+    // Бесплатные модели идут через локальный opencode run: прямой HTTP-шлюз
+    // OpenCode отвечает FreeUsageLimitError. opencode-cli — служебный адрес.
+    f.base.value = 'opencode-cli';
     f.model.value = f.free.value;
     const model = f.free.value;
     let keySaved = false;
     try {
-      if (!(doc?.key?.set ?? false)) {
+      // opencode-cli не нуждается в ключе; для HTTP-адресов без ключа
+      // бесплатная модель OpenCode работает с public.
+      if (!(doc?.key?.set ?? false) && f.base.value !== 'opencode-cli') {
         const k = await send('PUT', '/api/key', { key: 'public' });
         doc = { ...doc, key: k?.key ?? { set: true } };
         keySaved = true;
