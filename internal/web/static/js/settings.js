@@ -21,6 +21,10 @@ function pane(box) {
 const FORM = `
   <div class="card"><h3>Подключение</h3>
     <div class="grid">
+      <label for="f-free">Бесплатные OpenCode</label>
+      <div class="field"><select id="f-free"><option value="">— выбрать модель —</option></select>
+        <p class="hint">Подставляет адрес OpenCode и выбранную бесплатную модель. Для них нужен ключ
+          <code>public</code>: если ключа ещё нет, он подставится в поле ниже — останется нажать «Сохранить ключ».</p></div>
       <label for="f-base">Адрес API</label>
       <div class="field"><input id="f-base" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.deepseek.com/v1">
         <p class="hint">Адрес API, совместимого с OpenAI, например https://api.deepseek.com/v1. Ключ отправляется на этот адрес.</p></div>
@@ -82,7 +86,8 @@ async function settingsTab(box, app) {
   }
   p.innerHTML = FORM;
   const $ = s => p.querySelector(s);
-  const f = { base: $('#f-base'), model: $('#f-model'), effort: $('#f-effort'), budget: $('#f-budget') };
+  const f = { free: $('#f-free'), base: $('#f-base'), model: $('#f-model'), effort: $('#f-effort'), budget: $('#f-budget') };
+  let freeBase = ''; // адрес из /api/opencode/models; пустой — список ещё не загружен
   const els = {
     err: $('#err'), status: $('#status'), backup: $('#backup'),
     keyStatus: $('#key-status'), key: $('#key-input'), note: $('#key-note'),
@@ -90,14 +95,59 @@ async function settingsTab(box, app) {
   const buttons = [...p.querySelectorAll('button')];
   // Значения кладутся свойством value, а не разметкой: адрес и модель — чужой
   // ввод, а ключа в разметке не бывает вовсе.
+  // syncFree — выбрать в списке модель, если она уже стоит в поле «Модель»;
+  // иначе оставить «— выбрать модель —».
+  const syncFree = () => {
+    const model = f.model.value.trim();
+    const known = [...f.free.options].some(o => o.value === model && o.value !== '');
+    f.free.value = known ? model : '';
+  };
   const fill = d => {
     f.base.value = d?.base_url ?? '';
     f.model.value = d?.model ?? '';
     f.effort.value = d?.reasoning_effort ?? 'high';
     f.budget.value = String(d?.context_budget ?? 0);
+    syncFree();
   };
   fill(doc);
   paintKey(els.keyStatus, doc?.key);
+
+  // Список бесплатных моделей — с сервера: он спрашивает opencode CLI, затем
+  // его кеш, затем отдаёт встроенный список. Не удалось — список пуст, поля
+  // адреса и модели остаются доступны вручную.
+  (async () => {
+    try {
+      const fm = await get('/api/opencode/models');
+      freeBase = fm?.base_url ?? '';
+      for (const m of fm?.models ?? []) {
+        const o = document.createElement('option');
+        o.value = m.id;
+        o.textContent = m.name || m.id;
+        f.free.append(o);
+      }
+      f.free.disabled = false;
+      syncFree();
+    } catch {
+      f.free.disabled = true;
+    }
+  })();
+
+  f.free.addEventListener('change', () => {
+    if (!f.free.value || busy) return;
+    f.base.value = freeBase || f.base.value;
+    f.model.value = f.free.value;
+    els.status.textContent = 'есть несохранённые изменения';
+    // У бесплатных моделей ключ — public. Заданный ключ не трогаем: у него
+    // может быть свой консольный доступ.
+    if (!(doc?.key?.set ?? false) && !els.key.value) {
+      els.key.value = 'public';
+      els.note.hidden = false;
+      els.note.textContent = 'для бесплатных моделей ключ public — нажмите «Сохранить ключ»';
+    } else if (doc?.key?.set ?? false) {
+      els.note.hidden = false;
+      els.note.textContent = 'ключ уже задан; для бесплатных моделей нужен public — проверьте блок «Ключ API»';
+    }
+  });
 
   // Запрос в пути — все кнопки выключены, поля только для чтения: двойной щелчок
   // или Enter не отправят то же второй раз, а ответ не затрёт набираемое. Поля не
