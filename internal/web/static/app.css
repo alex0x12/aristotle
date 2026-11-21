@@ -185,6 +185,13 @@ blockquote.quote cite { display: block; font-style: normal; color: var(--lbl); m
 .library .search input { flex: 1; background: rgba(0,0,0,.5); border: 1px solid var(--line); padding: 5px 10px; }
 .library .search input::placeholder { color: var(--dim); opacity: 1; }
 .library .search input:focus { outline: none; border-color: var(--bone); }
+/* EN/RU: язык корпуса — общий для библиотеки и беседы. */
+.langsw { display: flex; border: 1px solid var(--line); flex-shrink: 0; }
+.langsw button { background: none; border: none; color: var(--ash); font: inherit; font-size: 12px;
+  letter-spacing: .12em; padding: 0 9px; cursor: pointer; }
+.langsw button:hover { color: var(--bone); }
+.langsw button.on { background: var(--bone); color: var(--ink); }
+.dialog-head .head-end { display: flex; align-items: center; gap: 12px; flex: none; }
 .library .cols { flex: 1; display: flex; min-height: 0; }
 .library .works { width: 290px; flex-shrink: 0; overflow-y: auto; padding: 4px 16px 12px; border-right: 1px solid var(--line); font-size: 16.5px; }
 .library .works h4 { color: var(--lbl); margin: 12px 0 4px; }

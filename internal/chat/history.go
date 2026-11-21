@@ -29,6 +29,7 @@ type Quote struct {
 	Ru       string `json:"ru"`
 	Verified bool   `json:"verified"`
 	Chapter  string `json:"chapter,omitempty"`
+	Lang     string `json:"lang,omitempty"` // "ru" — глава из corpus-ru/, пусто — английская
 }
 
 type Record struct {

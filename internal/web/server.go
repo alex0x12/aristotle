@@ -72,7 +72,7 @@ type Server struct {
 	convs map[string]*conv
 
 	worksMu sync.Mutex
-	works   []workRef
+	works   map[string][]workRef // по языку корпуса: "en" и "ru"
 }
 
 func New(root string, paths app.Paths, port int) *Server {

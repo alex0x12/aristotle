@@ -23,7 +23,9 @@ def test_query_argument_order(tmp_path):
     calls = []
     recall.search("demo", tmp_path, "-c чужая", 6, fake_qmd([], calls))
     # Флаги первыми, запрос последним после «--»: иначе qmd прочёл бы его как флаг.
-    assert calls == [("query", "-c", "demo", "--json", "-n", "6", "--", "-c чужая")]
+    # --no-rerank — до «--», как и у Go-клиента: реранкер дороже всего поиска.
+    assert calls == [("query", "-c", "demo", "--json", "-n", "6",
+                      "--no-rerank", "--", "-c чужая")]
 
 
 def test_paths_relative_and_spurious_dropped(tmp_path):

@@ -73,7 +73,7 @@ func bookLess(a, b string) bool {
 // оглавление не попадает, как не попадает и в поиск. Ссылки пропускаются:
 // handleChapter всё равно не отдал бы ту, что ведёт за corpus/, а в
 // оглавлении не должно быть ссылок, которые не открываются.
-func loadWorks(dir string) ([]workRef, error) {
+func loadWorks(dir, lang string) ([]workRef, error) {
 	byWork := map[string]*workRef{}
 	books := map[string]map[string]*bookRef{}
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -98,7 +98,11 @@ func loadWorks(dir string) ([]workRef, error) {
 		}
 		w, ok := byWork[ch.WorkSlug]
 		if !ok {
-			ru, _ := corpus.TitleRu(ch.WorkSlug)
+			// В русском корпусе work уже по-русски: второй раз название не нужно.
+			ru := ""
+			if lang == langEn {
+				ru, _ = corpus.TitleRu(ch.WorkSlug)
+			}
 			w = &workRef{Slug: ch.WorkSlug, Title: ch.Work, TitleRu: ru, Group: ch.Group,
 				Authenticity: ch.Authenticity, Translator: ch.Translator}
 			byWork[ch.WorkSlug] = w
@@ -129,31 +133,64 @@ func loadWorks(dir string) ([]workRef, error) {
 	return out, nil
 }
 
-// worksIndex читает оглавление один раз: корпус во время работы не меняется.
-// Неудача не кэшируется — поправив -root или corpus/, пользователь обновит
-// страницу без перезапуска.
-func (s *Server) worksIndex() ([]workRef, error) {
+// Язык корпуса в веб-панели: английский (по умолчанию) или локальный русский.
+const (
+	langEn = "en"
+	langRu = "ru"
+)
+
+func corpusLang(raw string) (string, bool) {
+	switch raw {
+	case "", langEn:
+		return langEn, true
+	case langRu:
+		return langRu, true
+	}
+	return "", false
+}
+
+func corpusDir(lang string) string {
+	if lang == langRu {
+		return "corpus-ru"
+	}
+	return "corpus"
+}
+
+// worksIndex читает оглавление один раз на язык: корпус во время работы не
+// меняется. Неудача не кэшируется — поправив -root или corpus/, пользователь
+// обновит страницу без перезапуска.
+func (s *Server) worksIndex(lang string) ([]workRef, error) {
 	s.worksMu.Lock()
 	defer s.worksMu.Unlock()
-	if s.works == nil {
-		works, err := loadWorks(filepath.Join(s.Root, "corpus"))
-		if err != nil {
-			return nil, err
-		}
-		s.works = works
+	if works, ok := s.works[lang]; ok {
+		return works, nil
 	}
-	return s.works, nil
+	works, err := loadWorks(filepath.Join(s.Root, corpusDir(lang)), lang)
+	if err != nil {
+		return nil, err
+	}
+	if s.works == nil {
+		s.works = map[string][]workRef{}
+	}
+	s.works[lang] = works
+	return works, nil
 }
 
 func (s *Server) handleWorks(w http.ResponseWriter, r *http.Request) {
-	works, err := s.worksIndex()
+	lang, ok := corpusLang(r.URL.Query().Get("lang"))
+	if !ok {
+		http.Error(w, "неверный язык корпуса", http.StatusBadRequest)
+		return
+	}
+	works, err := s.worksIndex(lang)
 	if errors.Is(err, fs.ErrNotExist) {
-		log.Printf("оглавление корпуса: %v", err)
-		http.Error(w, "каталог corpus/ не найден в корне репозитория (параметр -root)", http.StatusInternalServerError)
+		dir := corpusDir(lang)
+		log.Printf("оглавление корпуса (%s): %v", dir, err)
+		http.Error(w, "каталог "+dir+"/ не найден в корне репозитория (параметр -root)", http.StatusInternalServerError)
 		return
 	}
 	if err != nil {
-		log.Printf("оглавление корпуса: %v", err)
+		log.Printf("оглавление корпуса (%s): %v", corpusDir(lang), err)
 		http.Error(w, "оглавление корпуса не прочиталось", http.StatusInternalServerError)
 		return
 	}
@@ -183,8 +220,8 @@ var errNoChapter = errors.New("нет такой главы")
 // corpus/, и ссылка, выводящая за корень, даёт ошибку, а не чужой файл.
 // Проверка и чтение идут одним корнем, поэтому подмена файла ссылкой между
 // ними тоже не выведет наружу. rel уже прошёл chapterPathRe.
-func (s *Server) readChapter(rel string) ([]byte, error) {
-	root, err := os.OpenRoot(filepath.Join(s.Root, "corpus"))
+func (s *Server) readChapter(rel, lang string) ([]byte, error) {
+	root, err := os.OpenRoot(filepath.Join(s.Root, corpusDir(lang)))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, errNoChapter
 	}
@@ -225,12 +262,17 @@ func (s *Server) readChapter(rel string) ([]byte, error) {
 }
 
 func (s *Server) handleChapter(w http.ResponseWriter, r *http.Request) {
+	lang, ok := corpusLang(r.URL.Query().Get("lang"))
+	if !ok {
+		http.Error(w, "неверный язык корпуса", http.StatusBadRequest)
+		return
+	}
 	rel := r.URL.Query().Get("path")
 	if len(rel) > maxChapterPath || !chapterPathRe.MatchString(rel) {
 		http.Error(w, "неверный путь главы", http.StatusBadRequest)
 		return
 	}
-	data, err := s.readChapter(rel)
+	data, err := s.readChapter(rel, lang)
 	if errors.Is(err, errNoChapter) {
 		http.Error(w, errNoChapter.Error(), http.StatusNotFound)
 		return
@@ -248,12 +290,15 @@ func (s *Server) handleChapter(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{
 		"work": ch.Work, "book": ch.Book, "number": ch.Number, "cite": ch.Cite, "group": ch.Group,
-		"authenticity": ch.Authenticity, "translator": ch.Translator, "path": ch.Path, "text": ch.Text,
+		"authenticity": ch.Authenticity, "translator": ch.Translator, "path": ch.Path,
+		"text": ch.Text, "lang": lang,
 	}
-	// Работы нет в таблице названий — ключа нет, а не пустая строка: как у
-	// прочих необязательных полей, интерфейс читает его с запасным значением.
-	if ru, ok := corpus.TitleRu(ch.WorkSlug); ok {
-		out["work_ru"] = ru
+	// Русский корпус уже несёт русское название в work; второй раз оно не
+	// нужно. Для английского — таблица русских названий, если работа в ней есть.
+	if lang == langEn {
+		if ru, ok := corpus.TitleRu(ch.WorkSlug); ok {
+			out["work_ru"] = ru
+		}
 	}
 	writeJSON(w, out)
 }
@@ -317,6 +362,11 @@ func checkSearchInput(q, group string) string {
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	lang, ok := corpusLang(r.URL.Query().Get("lang"))
+	if !ok {
+		http.Error(w, "неверный язык корпуса", http.StatusBadRequest)
+		return
+	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	group := r.URL.Query().Get("group")
 	out := []hitView{}
@@ -330,7 +380,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.searchDeadline())
 	defer cancel()
-	hits, err := s.finder().Search(ctx, q, group, config.DefaultCorpusK)
+	hits, err := s.finderFor(lang).Search(ctx, q, group, config.DefaultCorpusK)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return // читатель ушёл со страницы; отвечать некому, ошибкой это не считается
@@ -344,8 +394,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Подробности (путь корня, вывод qmd) — в журнал сервера, а не читателю.
-		log.Printf("поиск по корпусу: %v", err)
-		msg := "поиск не удался: ошибка qmd или не построен индекс (make index); подробности в журнале сервера"
+		log.Printf("поиск по корпусу (%s): %v", corpusDir(lang), err)
+		target := "make index"
+		if lang == langRu {
+			target = "make index-ru"
+		}
+		msg := "поиск не удался: ошибка qmd или не построен индекс (" + target + "); подробности в журнале сервера"
 		if errors.Is(err, exec.ErrNotFound) {
 			msg = "поиск недоступен: программа qmd не найдена в PATH"
 		}
@@ -354,7 +408,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, h := range hits {
 		c := h.Chapter
-		ru, _ := corpus.TitleRu(c.WorkSlug)
+		ru := ""
+		if lang == langEn {
+			ru, _ = corpus.TitleRu(c.WorkSlug)
+		}
 		out = append(out, hitView{Cite: c.Cite, Path: c.Path, Work: c.Work, WorkRu: ru,
 			Authenticity: c.Authenticity, Snippet: snippet(c.Text, 280)})
 	}

@@ -39,6 +39,22 @@ func chapterFile(t *testing.T, root, rel, work, slug, book string, n int, auth s
 	}
 }
 
+// ruChapterFile — глава локального русского корпуса (corpus-ru/): work уже
+// по-русски, source: pdf, book может быть null.
+func ruChapterFile(t *testing.T, root, rel, work, slug string, n int) {
+	t.Helper()
+	data := fmt.Sprintf("---\nwork: %q\nwork_slug: %s\nbook: null\nchapter: %d\n"+
+		"group: ethics\nauthenticity: genuine\ntranslator: \"Т. А. Миллер\"\n"+
+		"source: pdf\ncite: %q\n---\n\nРусский текст главы.\n", work, slug, n, fmt.Sprintf("%s %d", work, n))
+	path := filepath.Join(root, "corpus-ru", filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // recFinder запоминает, с чем его спросили, и отдаёт заготовленный ответ.
 type recFinder struct {
 	hits  []corpus.Hit
@@ -601,5 +617,78 @@ func TestSnippet(t *testing.T) {
 	}
 	if got := snippet("абвгд", 3); got != "абв…" {
 		t.Errorf("обрезка по рунам: %q", got)
+	}
+}
+
+// Русское оглавление читается из corpus-ru/ и кэшируется отдельно от
+// английского: переключение языка не подменяет уже загруженное оглавление.
+func TestWorksIndexRussianAndEnglishAreSeparate(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	chapterFile(t, s.Root, "ethics/01.md", "Ethics", "ethics", "", 1, "genuine")
+	ruChapterFile(t, s.Root, "magna-moralia/i/01.md", "Большая этика", "magna-moralia", 1)
+
+	rec := do(t, s.Handler(), http.MethodGet, "/api/corpus/works?lang=ru", "")
+	if rec.Code != 200 {
+		t.Fatalf("код %d, %s", rec.Code, rec.Body.String())
+	}
+	var ru []workRef
+	if err := json.Unmarshal(rec.Body.Bytes(), &ru); err != nil || len(ru) != 1 {
+		t.Fatalf("русское оглавление %s, %v", rec.Body.String(), err)
+	}
+	if ru[0].Title != "Большая этика" || ru[0].TitleRu != "" {
+		t.Fatalf("работа не по-русски или продублировано название: %+v", ru[0])
+	}
+
+	rec = do(t, s.Handler(), http.MethodGet, "/api/corpus/works", "")
+	var en []workRef
+	if err := json.Unmarshal(rec.Body.Bytes(), &en); err != nil || len(en) != 1 || en[0].Title != "Ethics" {
+		t.Fatalf("английское оглавление после русского: %s, %v", rec.Body.String(), err)
+	}
+}
+
+// Один и тот же путь главы в двух корпусах — разные тексты; lang выбирает корень.
+func TestChapterLangSelectsCorpusRoot(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	chapterFile(t, s.Root, "ethics/01.md", "Ethics", "ethics", "", 1, "genuine")
+	ruChapterFile(t, s.Root, "ethics/01.md", "Этика", "ethics", 1)
+
+	rec := do(t, s.Handler(), http.MethodGet, "/api/corpus/chapter?path=ethics/01.md&lang=ru", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Русский текст главы") ||
+		!strings.Contains(rec.Body.String(), `"lang":"ru"`) ||
+		strings.Contains(rec.Body.String(), "work_ru") {
+		t.Fatalf("русская глава: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(t, s.Handler(), http.MethodGet, "/api/corpus/chapter?path=ethics/01.md", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Text of the chapter") ||
+		strings.Contains(rec.Body.String(), "Русский текст") {
+		t.Fatalf("английская глава: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCorpusRejectsUnknownLang(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	for _, path := range []string{
+		"/api/corpus/works?lang=de",
+		"/api/corpus/chapter?path=ethics/01.md&lang=de",
+		"/api/corpus/search?q=habit&lang=de",
+	} {
+		if rec := do(t, s.Handler(), http.MethodGet, path, ""); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: код %d", path, rec.Code)
+		}
+	}
+}
+
+// Без подмены finderFor выбирает коллекцию по языку; qmd при этом не зовётся.
+func TestFinderForLanguageUsesSeparateCollections(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	s.Finder = nil // тестовая подмена не нужна
+	en, ok := s.finderFor(langEn).(*corpus.Searcher)
+	if !ok || en.Collection != "aristotle" || filepath.Base(en.Root) != "corpus" {
+		t.Fatalf("английский поиск: %+v", en)
+	}
+	ru, ok := s.finderFor(langRu).(*corpus.Searcher)
+	if !ok || ru.Collection != "aristotle-ru" || filepath.Base(ru.Root) != "corpus-ru" {
+		t.Fatalf("русский поиск: %+v", ru)
 	}
 }

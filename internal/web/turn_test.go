@@ -789,3 +789,108 @@ func TestTurnWithCorruptKeysFileShowsNoPathOrParserText(t *testing.T) {
 		t.Errorf("отказ изменил журнал беседы: %q", after)
 	}
 }
+
+// captureProvider запоминает запросы к модели: по ним видно системную добавку.
+type captureProvider struct{ reqs []provider.Request }
+
+func (p *captureProvider) Stream(_ context.Context, req provider.Request) (provider.Stream, error) {
+	p.reqs = append(p.reqs, req)
+	return &scriptedStream{events: []provider.Event{
+		{Kind: provider.EventText, Text: "Ответ.\n"},
+		{Kind: provider.EventDone, StopReason: "end_turn"},
+	}}, nil
+}
+
+func TestTurnRussianSelectsCorpusAndPrompt(t *testing.T) {
+	p := &captureProvider{}
+	s := newTestServer(t, p, fakeFinder{})
+	rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns?lang=ru", `{"text":"Что такое добродетель?"}`)
+	if rec.Code != 200 {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(p.reqs) != 1 || !strings.Contains(p.reqs[0].System, "Русский корпус") ||
+		!strings.Contains(p.reqs[0].System, "по-русски") {
+		t.Fatalf("в системном промпте нет русской добавки: %+v", p.reqs)
+	}
+
+	// Английский ход после русского не должен тащить добавку дальше.
+	p.reqs = nil
+	rec = do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns", `{"text":"And virtue?"}`)
+	if rec.Code != 200 || len(p.reqs) != 1 || strings.Contains(p.reqs[0].System, "Русский корпус") {
+		t.Fatalf("добавка осталась в английском ходе: %d %+v", rec.Code, p.reqs)
+	}
+}
+
+func TestPrepareSessionSwitchesCollectionBackAndForth(t *testing.T) {
+	s := newTestServer(t, nil, nil)
+	s.Finder = nil
+	c := &conv{baseSystem: "ПЕРСОНА"}
+	sess := &chat.Session{}
+
+	s.prepareSession(sess, c, langRu)
+	ru, ok := sess.Corpus.(*corpus.Searcher)
+	if !ok || ru.Collection != "aristotle-ru" || filepath.Base(ru.Root) != "corpus-ru" {
+		t.Fatalf("русский поиск: %+v", sess.Corpus)
+	}
+	if !strings.Contains(sess.System, "Русский корпус") {
+		t.Fatalf("нет добавки: %q", sess.System)
+	}
+
+	s.prepareSession(sess, c, langEn)
+	en, ok := sess.Corpus.(*corpus.Searcher)
+	if !ok || en.Collection != "aristotle" || filepath.Base(en.Root) != "corpus" {
+		t.Fatalf("английский поиск: %+v", sess.Corpus)
+	}
+	if sess.System != "ПЕРСОНА" {
+		t.Fatalf("добавка накопилась: %q", sess.System)
+	}
+}
+
+func TestTurnRejectsUnknownCorpusLang(t *testing.T) {
+	p := &captureProvider{}
+	s := newTestServer(t, p, fakeFinder{})
+	for _, path := range []string{"/turns?lang=de", "/again?lang=de"} {
+		rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+path, `{"text":"вопрос"}`)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: код %d", path, rec.Code)
+		}
+	}
+	if len(p.reqs) != 0 {
+		t.Fatalf("до модели дошёл запрос при неверном языке: %+v", p.reqs)
+	}
+}
+
+// Язык врезки едет и в поток, и в журнал: панель источников читает главу из
+// того корпуса, откуда она пришла.
+func TestRussianQuoteCarriesLang(t *testing.T) {
+	s := newTestServer(t, &scriptedProvider{turns: script()}, fakeFinder{hits: []corpus.Hit{{Chapter: ethics}}})
+	rec := do(t, s.Handler(), http.MethodPost, "/api/conversations/"+convID+"/turns?lang=ru", `{"text":"Что такое добродетель?"}`)
+	if rec.Code != 200 {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	found := false
+	for _, ev := range parseSSE(t, rec.Body.String()) {
+		if ev.Name == "block" && ev.Data["kind"] == "quote" {
+			found = true
+			if ev.Data["lang"] != "ru" {
+				t.Fatalf("у врезки нет lang=ru: %v", ev.Data)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("в потоке нет врезки")
+	}
+	recs, err := (&chat.History{Path: filepath.Join(s.Paths.History, convID+".jsonl")}).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		if r.Role == "assistant" && len(r.Quotes) > 0 {
+			if r.Quotes[0].Lang != "ru" {
+				t.Fatalf("в журнале lang=%q", r.Quotes[0].Lang)
+			}
+			return
+		}
+	}
+	t.Fatal("в журнале нет ответа с врезкой")
+}

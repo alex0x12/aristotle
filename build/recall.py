@@ -35,7 +35,8 @@ def _frontmatter(text: str) -> str:
 
 def search(collection: str, corpus: Path, query: str, k: int, run=run_qmd,
            group: str = "") -> list[str]:
-    out = run("query", "-c", collection, "--json", "-n", str(k), "--", query)
+    out = run("query", "-c", collection, "--json", "-n", str(k),
+              "--no-rerank", "--", query)
     prefix = f"qmd://{collection}/"
     found = []
     for r in json.loads(out):

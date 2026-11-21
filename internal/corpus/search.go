@@ -62,8 +62,15 @@ func (s *Searcher) Search(ctx context.Context, query, group string, k int) ([]Hi
 	// («--help» печатает справку, «-c чужая» подменяет коллекцию). Поэтому
 	// флаги идут первыми, а запрос — последним, после «--»: всё за ним qmd
 	// (util.parseArgs) принимает как позиционное, что бы там ни было написано.
+	//
+	// --no-rerank: реранкер qmd (Qwen3-0.6B) в свежем процессе инициализируется
+	// десятками секунд, и на ноутбучном GPU это дороже всего остального поиска —
+	// замер на 7 вопросах eval/questions.yaml дал 12 с медианы и 8 мин 55 с в
+	// худшем случае с реранком против 3,2 с и 5,2 с без него, при recall 4/6
+	// против 6/7. Ранжирование остаётся гибридным (lex+vec+hyde, слияние RRF),
+	// теряется только LLM-переупорядочивание.
 	out, err := run(ctx, "query", "-c", s.Collection,
-		"--json", "-n", strconv.Itoa(k), "--", query)
+		"--json", "-n", strconv.Itoa(k), "--no-rerank", "--", query)
 	if err != nil {
 		return nil, fmt.Errorf("qmd query: %w", err)
 	}

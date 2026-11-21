@@ -29,6 +29,9 @@ type conv struct {
 	history chat.History
 	mu      sync.Mutex // один ход за раз; занят — 409
 	session *chat.Session
+	// baseSystem — персона без языковой добавки; System сессии на каждом ходу
+	// собирается из неё и выбранного языка корпуса.
+	baseSystem string
 	// lastPrompt — вход последнего запроса, для шкалы контекста; читается
 	// без блокировки хода.
 	lastPrompt atomic.Int64
@@ -116,6 +119,7 @@ func blocksOf(rec chat.Record) ([]render.Block, bool) {
 		if qi < len(rec.Quotes) {
 			out[i].Verified = rec.Quotes[qi].Verified
 			out[i].Chapter = rec.Quotes[qi].Chapter
+			out[i].Lang = rec.Quotes[qi].Lang
 			qi++
 		} else {
 			unknown = true

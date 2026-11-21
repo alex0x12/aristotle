@@ -1,4 +1,4 @@
-import { get, esc } from './api.js';
+import { get, esc, getLang, setLang, langQuery } from './api.js';
 import { paragraphs } from './sources.js';
 import { chapterHead } from './titles.js';
 
@@ -33,13 +33,22 @@ const groupName = g => GROUPS[g] ?? (g ? g.toUpperCase() : 'ПРОЧЕЕ');
 let live = null;
 
 export async function showLibrary(center, path) {
-  if (live && center.contains(live.root)) return live.show(path);
+  if (live && center.contains(live.root)) {
+    // Язык могли переключить в беседе: тогда прежний экран уже не тот.
+    if (live.lang === getLang()) return live.show(path);
+    live.cancel();
+    live = null;
+    center.innerHTML = '';
+  }
   live?.cancel(); // прежний экран ушёл из центра: его запрос больше никому не нужен
 
   center.innerHTML = `<div class="library">
     <div class="mosaic"></div>
     <form class="search" id="lib-search">
-      <input id="lib-q" maxlength="300" autocomplete="off" placeholder="Искать в корпусе (по-английски: virtue, habit, the mean)">
+      <input id="lib-q" maxlength="300" autocomplete="off">
+      <div class="langsw" id="lib-lang" role="group" aria-label="Язык текстов">
+        <button type="button" data-lang="en" title="Английский корпус">EN</button><button type="button" data-lang="ru" title="Русский корпус">RU</button>
+      </div>
       <button class="btn" type="submit">ИСКАТЬ</button>
     </form>
     <div class="cols"><nav class="works" id="works">загружаю оглавление…</nav><div class="reader" id="reader"></div></div>
@@ -50,11 +59,31 @@ export async function showLibrary(center, path) {
   const form = root.querySelector('#lib-search');
   const input = root.querySelector('#lib-q');
   const submit = form.querySelector('button');
+  const langBox = root.querySelector('#lib-lang');
+
+  // Язык текстов живёт в браузере: переживает переходы по библиотеке и
+  // перезагрузку страницы. Сервер различает только en/ru.
+  let lang = getLang();
+  const suffix = () => langQuery();
+  const placeholder = () => (lang === 'ru'
+    ? 'Искать в русском корпусе (добродетель, середина, дружба)'
+    : 'Искать в корпусе (по-английски: virtue, habit, the mean)');
 
   let cur = '';   // открытая глава
   let found = null; // последний удачный поиск: { q, hits }
   let seq = 0;    // ответ устаревшего запроса не должен затирать новый
   let ctl = null; // обрыв запроса, который идёт сейчас
+
+  // paintLang — подпись поля и нажатая кнопка переключателя.
+  const paintLang = () => {
+    input.placeholder = placeholder();
+    for (const b of langBox.querySelectorAll('button')) {
+      const on = b.dataset.lang === lang;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+  };
+  paintLang();
 
   // begin — начало нового запроса справа. Прежний, если ещё идёт, обрывается, и
   // кнопка поиска отпускается тут же: её включение не должно зависеть от того,
@@ -97,13 +126,18 @@ export async function showLibrary(center, path) {
     mark(p);
     hint('загружаю главу…');
     try {
-      const ch = await get('/api/corpus/chapter?path=' + encodeURIComponent(p), signal);
+      const ch = await get('/api/corpus/chapter?path=' + encodeURIComponent(p) + suffix(), signal);
       if (my !== seq) return;
       // translator и book у сервера бывают пустыми; text читаем так же, как sources.js.
       // work_ru бывает без ключа: тогда заголовок и подзаголовок прежние, английские.
-      const head = chapterHead(ch.work_ru, ch.work, ch.cite);
+      // В русском корпусе work и cite уже русские — вторая строка не нужна.
+      const isRu = ch.lang === 'ru' || lang === 'ru';
+      const head = isRu ? { html: esc(ch.cite ?? ''), en: '' } : chapterHead(ch.work_ru, ch.work, ch.cite);
+      const sub = isRu
+        ? (ch.translator ? 'перевод ' + esc(ch.translator) : '')
+        : (head.en || esc(ch.work)) + (ch.translator ? ' · перевод ' + esc(ch.translator) : '');
       reader.innerHTML = `<h2>${head.html}</h2>
-        <div class="sub">${head.en || esc(ch.work)}${ch.translator ? ' · перевод ' + esc(ch.translator) : ''}${badge(ch.authenticity)}</div>
+        <div class="sub">${sub}${badge(ch.authenticity)}</div>
         ${paragraphs(ch.text ?? '')}`;
       reader.scrollTop = 0;
     } catch (e) {
@@ -121,17 +155,16 @@ export async function showLibrary(center, path) {
     mark('');
     if (found) showHits(found); else hint('Выберите сочинение слева или найдите место поиском.');
   };
-  live = { root, show, cancel: () => ctl?.abort() };
+  live = { root, show, lang, cancel: () => ctl?.abort() };
 
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
+  const doSearch = async () => {
     const q = input.value.trim();
     if (!q) return;
     const { my, signal } = begin();
     submit.disabled = true;
     hint(`ищу «${q}»… холодный поиск поднимается до 15 секунд`);
     try {
-      const hits = await get('/api/corpus/search?q=' + encodeURIComponent(q), signal);
+      const hits = await get('/api/corpus/search?q=' + encodeURIComponent(q) + suffix(), signal);
       if (my !== seq) return;
       found = { q, hits: hits ?? [] };
       showHits(found);
@@ -143,6 +176,11 @@ export async function showLibrary(center, path) {
       // здесь значило бы разблокировать её посреди чужого поиска.
       if (my === seq) submit.disabled = false;
     }
+  };
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    doSearch();
   });
 
   worksBox.addEventListener('click', e => {
@@ -162,26 +200,53 @@ export async function showLibrary(center, path) {
     show(cur);
   });
 
-  show(path);
+  // loadWorks — оглавление выбранного языка. Русский корпус лежит отдельно и
+  // отдаёт русские названия в поле work, поэтому title_ru у него нет.
+  const loadWorks = async () => {
+    worksBox.textContent = 'загружаю оглавление…';
+    try {
+      const works = (await get('/api/corpus/works' + (lang === 'ru' ? '?lang=ru' : ''))) ?? [];
+      const byGroup = {};
+      for (const w of works) (byGroup[w.group ?? ''] ??= []).push(w);
+      // Сервер сортирует по английскому названию, а читатель ищет по русскому.
+      for (const list of Object.values(byGroup)) list.sort((a, b) => shown(a).localeCompare(shown(b), 'ru'));
+      // Известные группы — в порядке корпуса, неизвестные (новые в корпусе) — следом.
+      const order = [...Object.keys(GROUPS), ...Object.keys(byGroup).filter(g => !(g in GROUPS))];
+      worksBox.innerHTML = order.filter(g => byGroup[g]).map(g =>
+        `<h4>${esc(groupName(g))}</h4>` + byGroup[g].map(w => `<div class="work">
+          <button type="button" aria-expanded="false"><span class="wt">${esc(shown(w))}${w.title_ru ? `<small>${esc(w.title)}</small>` : ''}</span>${badge(w.authenticity)}</button>
+          <div class="chapters" hidden>${(w.books ?? []).map(b =>
+            ((b.book ?? '') ? `<span class="book">КНИГА ${esc(b.book.toUpperCase())}</span>` : '') +
+            (b.chapters ?? []).map(c =>
+              `<a href="#/library/${esc(encodeURI(c.path ?? ''))}" data-path="${esc(c.path)}" title="${esc(c.cite)}">${esc(c.number)}</a>`).join('')
+          ).join('')}</div></div>`).join('')).join('');
+      mark(cur);
+    } catch (e) {
+      worksBox.innerHTML = `<p class="status">оглавление не загрузилось: ${esc(reason(e))}</p>`;
+    }
+  };
 
-  try {
-    const works = (await get('/api/corpus/works')) ?? [];
-    const byGroup = {};
-    for (const w of works) (byGroup[w.group ?? ''] ??= []).push(w);
-    // Сервер сортирует по английскому названию, а читатель ищет по русскому.
-    for (const list of Object.values(byGroup)) list.sort((a, b) => shown(a).localeCompare(shown(b), 'ru'));
-    // Известные группы — в порядке корпуса, неизвестные (новые в корпусе) — следом.
-    const order = [...Object.keys(GROUPS), ...Object.keys(byGroup).filter(g => !(g in GROUPS))];
-    worksBox.innerHTML = order.filter(g => byGroup[g]).map(g =>
-      `<h4>${esc(groupName(g))}</h4>` + byGroup[g].map(w => `<div class="work">
-        <button type="button" aria-expanded="false"><span class="wt">${esc(shown(w))}${w.title_ru ? `<small>${esc(w.title)}</small>` : ''}</span>${badge(w.authenticity)}</button>
-        <div class="chapters" hidden>${(w.books ?? []).map(b =>
-          ((b.book ?? '') ? `<span class="book">КНИГА ${esc(b.book.toUpperCase())}</span>` : '') +
-          (b.chapters ?? []).map(c =>
-            `<a href="#/library/${esc(encodeURI(c.path ?? ''))}" data-path="${esc(c.path)}" title="${esc(c.cite)}">${esc(c.number)}</a>`).join('')
-        ).join('')}</div></div>`).join('')).join('');
-    mark(cur);
-  } catch (e) {
-    worksBox.innerHTML = `<p class="status">оглавление не загрузилось: ${esc(reason(e))}</p>`;
-  }
+  // Переключатель языка: меняет оглавление, поиск и открытую главу. Адрес
+  // страницы не трогаем — выбор запомнен в localStorage и переживает переходы.
+  langBox.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-lang]');
+    if (!b || b.dataset.lang === lang) return;
+    lang = b.dataset.lang === 'ru' ? 'ru' : 'en';
+    setLang(lang);
+    if (live) live.lang = lang;
+    paintLang();
+    found = null;
+    cur = '';
+    mark('');
+    // Ссылка на главу прежнего языка больше не соответствует выбору; адрес
+    // оставляем на библиотеке, чтобы перезагрузка не открыла чужой путь.
+    if (location.hash !== '#/library') history.replaceState(null, '', '#/library');
+    begin();
+    await loadWorks();
+    if (input.value.trim()) await doSearch();
+    else show('');
+  });
+
+  show(path);
+  await loadWorks();
 }

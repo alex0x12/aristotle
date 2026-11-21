@@ -109,7 +109,9 @@ func TestSearchQueryIsLastAfterTerminator(t *testing.T) {
 			if _, err := s.Search(context.Background(), q, "", 4); err != nil {
 				t.Fatal(err)
 			}
-			want := []string{"query", "-c", "mine", "--json", "-n", "4", "--", q}
+			// --no-rerank — до «--», вместе с остальными флагами: иначе оно
+			// уйдёт в позиционный запрос и станет частью поисковой строки.
+			want := []string{"query", "-c", "mine", "--json", "-n", "4", "--no-rerank", "--", q}
 			if !slices.Equal(got, want) {
 				t.Fatalf("аргументы qmd:\n got  %q\n want %q", got, want)
 			}
