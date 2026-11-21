@@ -127,6 +127,20 @@ async function settingsTab(box, app) {
       }
       f.free.disabled = false;
       syncFree();
+      // Уже выбранная бесплатная модель без ключа — состояние, с которым
+      // беседа отвечала «ключ API не задан». Доводим до рабочего: public.
+      const isFree = [...f.free.options].some(o => o.value !== '' && o.value === f.model.value);
+      if (isFree && !(doc?.key?.set ?? false)) {
+        try {
+          const k = await send('PUT', '/api/key', { key: 'public' });
+          doc = { ...doc, key: k?.key ?? { set: true } };
+          paintKey(els.keyStatus, doc.key);
+          note(true, 'для бесплатной модели сохранён ключ public');
+          await refresh();
+        } catch (e) {
+          note(false, 'ключ public не сохранился: ' + reason(e));
+        }
+      }
     } catch {
       f.free.disabled = true;
     }
