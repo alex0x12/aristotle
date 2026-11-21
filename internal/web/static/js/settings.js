@@ -22,7 +22,7 @@ const FORM = `
   <div class="card"><h3>Подключение</h3>
     <div class="grid">
       <label for="f-free">Бесплатные OpenCode</label>
-      <div class="field"><select id="f-free"><option value="">— выбрать модель —</option></select>
+      <div class="field"><select id="f-free" disabled><option value="">— выбрать модель —</option></select>
         <p class="hint">Подставляет адрес OpenCode и выбранную бесплатную модель. Для них нужен ключ
           <code>public</code>: если ключа ещё нет, он подставится в поле ниже — останется нажать «Сохранить ключ».</p></div>
       <label for="f-base">Адрес API</label>
@@ -132,23 +132,6 @@ async function settingsTab(box, app) {
     }
   })();
 
-  f.free.addEventListener('change', () => {
-    if (!f.free.value || busy) return;
-    f.base.value = freeBase || f.base.value;
-    f.model.value = f.free.value;
-    els.status.textContent = 'есть несохранённые изменения';
-    // У бесплатных моделей ключ — public. Заданный ключ не трогаем: у него
-    // может быть свой консольный доступ.
-    if (!(doc?.key?.set ?? false) && !els.key.value) {
-      els.key.value = 'public';
-      els.note.hidden = false;
-      els.note.textContent = 'для бесплатных моделей ключ public — нажмите «Сохранить ключ»';
-    } else if (doc?.key?.set ?? false) {
-      els.note.hidden = false;
-      els.note.textContent = 'ключ уже задан; для бесплатных моделей нужен public — проверьте блок «Ключ API»';
-    }
-  });
-
   // Запрос в пути — все кнопки выключены, поля только для чтения: двойной щелчок
   // или Enter не отправят то же второй раз, а ответ не затрёт набираемое. Поля не
   // выключаются совсем: у выключенного поля фокус пропал бы.
@@ -157,6 +140,8 @@ async function settingsTab(box, app) {
     busy = on;
     buttons.forEach(b => { b.disabled = on; });
     [f.base, f.model, f.budget, els.key].forEach(i => { i.readOnly = on; });
+    // Список выключен и во время запроса, и пока он пуст (не загрузился).
+    f.free.disabled = on || f.free.options.length <= 1;
   };
   const run = async fn => {
     if (busy) return;
@@ -199,6 +184,49 @@ async function settingsTab(box, app) {
   });
 
   const fail = text => { els.err.hidden = false; els.err.textContent = text; };
+
+  // applyFree — выбор бесплатной модели применяет всё сразу: адрес, модель и
+  // ключ public, если ключа ещё нет. Иначе после выбора и «Сохранить» человек
+  // оставался с «ключ API не задан»: ключ сохраняется отдельной кнопкой.
+  const applyFree = () => run(async () => {
+    if (!f.free.value) return;
+    els.err.hidden = true;
+    els.note.hidden = true;
+    els.status.textContent = '';
+    const raw = f.budget.value.trim();
+    if (raw === '' || !Number.isFinite(Number(raw))) {
+      fail('Бюджет контекста: введите число; 0 — без урезания.');
+      return;
+    }
+    f.base.value = freeBase || f.base.value;
+    f.model.value = f.free.value;
+    const model = f.free.value;
+    let keySaved = false;
+    try {
+      if (!(doc?.key?.set ?? false)) {
+        const k = await send('PUT', '/api/key', { key: 'public' });
+        doc = { ...doc, key: k?.key ?? { set: true } };
+        keySaved = true;
+      }
+      const saved = await send('PUT', '/api/settings', {
+        base_url: f.base.value, model: f.model.value,
+        reasoning_effort: f.effort.value, context_budget: Number(raw),
+      });
+      doc = { ...saved, key: doc?.key ?? saved?.key };
+      fill(doc);
+      paintKey(els.keyStatus, doc?.key);
+      els.status.textContent = 'применено';
+      note(true, keySaved
+        ? `модель ${model} применена, ключ public сохранён`
+        : `модель ${model} применена; ключ не менялся`);
+      await refresh();
+    } catch (e) {
+      fail(reason(e));
+      note(false, reason(e));
+    }
+  });
+
+  f.free.addEventListener('change', () => { if (f.free.value) applyFree(); });
 
   // «Сохранить»: на сервер уходят ровно четыре поля. Ответ сервера — то, что записано
   // (адрес и модель обрезаны по краям), его и показываем.
