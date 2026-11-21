@@ -8,6 +8,7 @@ import (
 	"github.com/alex0x12/aristotle/internal/keys"
 	"github.com/alex0x12/aristotle/internal/provider"
 	"github.com/alex0x12/aristotle/internal/provider/openaicompat"
+	"github.com/alex0x12/aristotle/internal/provider/opencodecli"
 )
 
 // ErrNoKey — ключа нет. Текст один для командной строки и веб-интерфейса: он
@@ -45,18 +46,23 @@ func LoadConnection(paths Paths) (conn Connection, cfgErr error, err error) {
 	return conn, cfgErr, nil
 }
 
-// NewProvider создаёт провайдера. Без ключа — ErrNoKey, до всякой работы.
+// NewProvider создаёт провайдера. Без ключа — ErrNoKey, до всякой работы;
+// для opencode-cli ключ не нужен.
 // Настройки проверяются так же, как при сохранении настроек.
 func NewProvider(c Connection) (provider.Provider, error) {
-	if c.Key == "" {
+	if c.Key == "" && c.BaseURL != config.OpenCodeCLI {
 		return nil, ErrNoKey
+	}
+	cfg := config.Config{BaseURL: c.BaseURL, Model: c.Model,
+		ReasoningEffort: c.ReasoningEffort, ContextBudget: c.ContextBudget}.Normalized()
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("настройки: %w", err)
+	}
+	if cfg.BaseURL == config.OpenCodeCLI {
+		return opencodecli.New(cfg.Model, cfg.ReasoningEffort), nil
 	}
 	if _, err := keys.Normalize(c.Key); err != nil {
 		return nil, errors.New("ключ API недопустим") // сам ключ в тексте не повторяется
 	}
-	if err := (config.Config{BaseURL: c.BaseURL, Model: c.Model,
-		ReasoningEffort: c.ReasoningEffort, ContextBudget: c.ContextBudget}).Validate(); err != nil {
-		return nil, fmt.Errorf("настройки: %w", err)
-	}
-	return openaicompat.New(c.BaseURL, c.Model, c.Key, c.ReasoningEffort), nil
+	return openaicompat.New(cfg.BaseURL, cfg.Model, c.Key, cfg.ReasoningEffort), nil
 }

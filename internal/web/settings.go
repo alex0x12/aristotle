@@ -255,6 +255,11 @@ func (s *Server) handleCheckKey(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, out)
 	}
+	cfg, _ := s.loadConfig() // испорченный config.json — умолчания
+	if cfg.BaseURL == config.OpenCodeCLI {
+		writeJSON(w, map[string]any{"ok": true, "message": "opencode-cli: ключ не нужен"})
+		return
+	}
 	key, err := s.readKey()
 	if err != nil {
 		fail(0, keysUnreadableText) // без пути и без текста разбора
@@ -264,7 +269,6 @@ func (s *Server) handleCheckKey(w http.ResponseWriter, r *http.Request) {
 		fail(0, errNoKey.Error())
 		return
 	}
-	cfg, _ := s.loadConfig() // испорченный config.json — умолчания
 	timeout := s.keyCheckTimeout
 	if timeout == 0 {
 		timeout = defaultKeyCheckTimeout

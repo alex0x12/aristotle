@@ -44,6 +44,9 @@ type Server struct {
 	Finder      chat.Finder
 	System      string
 	HTTPClient  *http.Client
+	// OpenCodeModels — подмена списка бесплатных моделей в тестах; nil —
+	// спросить opencode CLI, затем его кеш, затем встроенный список.
+	OpenCodeModels func() ([]freeModel, string)
 
 	// Предел одного поиска; ноль — defaultSearchTimeout. Поле нужно тесту,
 	// чтобы не ждать 90 секунд.
@@ -125,6 +128,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/corpus/works", s.handleWorks)
 	mux.HandleFunc("GET /api/corpus/chapter", s.handleChapter)
 	mux.HandleFunc("GET /api/corpus/search", s.handleSearch)
+	mux.HandleFunc("GET /api/opencode/models", s.handleOpenCodeModels)
 	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	mux.HandleFunc("PUT /api/settings", s.handlePutSettings)
 	mux.HandleFunc("PUT /api/key", s.handlePutKey)

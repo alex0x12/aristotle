@@ -135,3 +135,11 @@ func TestNewProvider(t *testing.T) {
 		t.Fatalf("без ключа ожидалась ErrNoKey, получено %v", err)
 	}
 }
+
+func TestNewProviderOpenCodeCLINeedsNoKey(t *testing.T) {
+	p, err := NewProvider(Connection{BaseURL: config.OpenCodeCLI, Model: "beam-free",
+		ReasoningEffort: "high", ContextBudget: 1000})
+	if err != nil || p == nil {
+		t.Fatalf("opencode-cli без ключа: %v, %v", p, err)
+	}
+}
